@@ -283,7 +283,20 @@ class DataStore:
         if "version" not in data or "users" not in data:
             raise RuntimeError("users.json is missing required keys. Aborting startup.")
         data.setdefault("global", {"hatch_counts": {}})
+        global_data = data.setdefault("global", {})
+        global_data.setdefault("hatch_counts", {})
+        global_data.setdefault("owned_counts", {})
+        global_data.setdefault("sold_counts", {})
+        global_data["owned_counts"] = self._recalculate_owned_counts(data.get("users", {}))
         return data
+
+    def _recalculate_owned_counts(self, users: Dict[str, Dict]) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for profile in users.values():
+            zoo = profile.get("zoo", {})
+            for animal_id, qty in zoo.items():
+                counts[animal_id] = counts.get(animal_id, 0) + max(0, qty)
+        return counts
 
     def _default_profile(self, user_id: str) -> Dict:
         team = {"slot1": None, "slot2": None, "slot3": None}
@@ -317,6 +330,23 @@ class DataStore:
     def save_profile(self, profile: Dict) -> None:
         self.data.setdefault("users", {})[profile["user_id"]] = profile
         self._write_data()
+
+    def record_hatch(self, animal_id: str) -> None:
+        global_data = self.data.setdefault("global", {})
+        hatch_counts = global_data.setdefault("hatch_counts", {})
+        hatch_counts[animal_id] = hatch_counts.get(animal_id, 0) + 1
+
+    def adjust_owned_count(self, animal_id: str, delta: int) -> None:
+        global_data = self.data.setdefault("global", {})
+        owned_counts = global_data.setdefault("owned_counts", {})
+        owned_counts[animal_id] = max(0, owned_counts.get(animal_id, 0) + delta)
+
+    def record_sale(self, animal_id: str, amount: int) -> None:
+        if amount <= 0:
+            return
+        global_data = self.data.setdefault("global", {})
+        sold_counts = global_data.setdefault("sold_counts", {})
+        sold_counts[animal_id] = sold_counts.get(animal_id, 0) + amount
 
     def _write_data(self) -> None:
         with open(self.path, "w", encoding="utf-8") as f:
@@ -635,60 +665,149 @@ async def help_command(interaction: discord.Interaction, page: int = 1):
 
 
 def build_index_embed() -> discord.Embed:
-    embed = discord.Embed(
-        title="📘 Animal Index",
-        description=(
-            "Complete list of all animals, their roles, base stats, drop chances,\n"
-            "and global hatch counts.\n\n"
-            "For detailed information on a specific animal, use:\n"
-            "/stats <animal>\n\n"
-            "Drop rates shown per animal = (rarity total) ÷ (animals in that rarity)."
-        ),
-        color=0x2980B9,
+    description = (
+        "Browse animals by rarity. Use the filters to see what you own, what you're missing,"
+        " or everything at once."
     )
-    drop_rate_map = rarity_drop_rate_map()
-    animals_by_rarity: Dict[str, List[Animal]] = {rarity: [] for rarity, _ in RARITY_ORDER}
-    for animal in ANIMALS.values():
-        animals_by_rarity[animal.rarity].append(animal)
-
-    for rarity, emoji in RARITY_ORDER:
-        animals = animals_by_rarity.get(rarity, [])
-        if not animals:
-            continue
-        per_animal_rate = 0.0
-        if rarity in drop_rate_map and animals:
-            per_animal_rate = drop_rate_map[rarity] / len(animals)
-        lines: List[str] = []
-        for animal in animals:
-            lines.append(
-                "\n".join(
-                    [
-                        f"{animal.emoji} {animal.animal_id.replace('_', ' ').title()}",
-                        f"Role: {animal.role.title()}",
-                        f"Stats: HP {animal.hp} | ATK {animal.atk} | DEF {animal.defense}",
-                        f"Drop Rate: {per_animal_rate:.2f}%",
-                        f"Global Hatches: {store.data['global'].get('hatch_counts', {}).get(animal.animal_id, 0)}",
-                        "More Info: /stats <animal>",
-                    ]
-                )
-            )
-        chunked_values = chunk_text_blocks(lines)
-        for idx, block in enumerate(chunked_values):
-            name = f"{emoji} {rarity}" if idx == 0 else f"{emoji} {rarity} (cont.)"
-            embed.add_field(name=name, value=block, inline=False)
-
-    embed.set_footer(text="Use /stats <animal> for full details.")
+    embed = discord.Embed(title="📘 Animal Index", description=description, color=0x2980B9)
+    embed.set_footer(text="Buttons: ⬅️ / ➡️ to change rarity • Filters below")
     return embed
+
+
+def format_animal_block(animal: Animal, owned_amount: int) -> str:
+    owned_indicator = "🟢" if owned_amount > 0 else "🔴"
+    spawn_chance = spawn_chance_for_animal(animal)
+    hatched, owned_global, sold_global = global_animal_stats(animal.animal_id)
+    return (
+        f"{owned_indicator} {animal.emoji} {animal.animal_id}\n"
+        f"Role: {ROLE_EMOJI[animal.role]} {animal.role}\n\n"
+        f"❤️ HP: {animal.hp}\n"
+        f"⚔️ ATK: {animal.atk}\n"
+        f"🛡️ DEF: {animal.defense}\n\n"
+        f"🛡️ Team DEF Aura: +{animal.defense}\n"
+        f"🌱 Hatched globally: {hatched}\n"
+        f"🎯 Spawn Chance: {spawn_chance:.2f}%\n"
+        f"🌍 Owned Globally: {owned_global}\n"
+        f"💰 Sold Globally: {sold_global}\n"
+        f"💵 Value: {RARITY_SELL_VALUE[animal.rarity]} coins\n\n"
+        f"📜 Lore: {LORE.get(animal.animal_id, 'Mysterious origins.')}"
+    )
+
+
+class IndexView(discord.ui.View):
+    def __init__(self, user_id: int, profile: Dict):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.profile = profile
+        self.rarity_position = 0
+        self.filter_mode = "all"
+        self._sync_button_states()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Only the command user can use these buttons.", ephemeral=True)
+            return False
+        return True
+
+    def _sync_button_states(self) -> None:
+        self.previous_button.disabled = self.rarity_position == 0
+        self.next_button.disabled = self.rarity_position == len(RARITY_ORDER) - 1
+        self.all_button.style = (
+            discord.ButtonStyle.primary if self.filter_mode == "all" else discord.ButtonStyle.secondary
+        )
+        self.owned_button.style = (
+            discord.ButtonStyle.primary if self.filter_mode == "owned" else discord.ButtonStyle.secondary
+        )
+        self.not_owned_button.style = (
+            discord.ButtonStyle.primary if self.filter_mode == "not_owned" else discord.ButtonStyle.secondary
+        )
+
+    def _build_page(self) -> discord.Embed:
+        self.profile = store.load_profile(str(self.user_id))
+        rarity, emoji = RARITY_ORDER[self.rarity_position]
+        animals = rarity_animals(rarity)
+        blocks: List[str] = []
+        for animal in animals:
+            owned_amount = self.profile.get("zoo", {}).get(animal.animal_id, 0)
+            if self.filter_mode == "owned" and owned_amount <= 0:
+                continue
+            if self.filter_mode == "not_owned" and owned_amount > 0:
+                continue
+            blocks.append(format_animal_block(animal, owned_amount))
+
+        embed = build_index_embed()
+        filter_titles = {"all": "All", "owned": "Owned", "not_owned": "Not Owned"}
+        embed.title = f"📘 Animal Index — {emoji} {rarity.title()}"
+        embed.add_field(
+            name=f"Filter: {filter_titles[self.filter_mode]}",
+            value="\n\n".join(blocks) if blocks else "No animals match this filter.",
+            inline=False,
+        )
+        return embed
+
+    async def _update_message(self, interaction: discord.Interaction) -> None:
+        self._sync_button_states()
+        await interaction.response.edit_message(embed=self._build_page(), view=self)
+
+    @discord.ui.button(emoji="⬅️", style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.rarity_position = max(0, self.rarity_position - 1)
+        await self._update_message(interaction)
+
+    @discord.ui.button(emoji="➡️", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.rarity_position = min(len(RARITY_ORDER) - 1, self.rarity_position + 1)
+        await self._update_message(interaction)
+
+    @discord.ui.button(label="All", style=discord.ButtonStyle.secondary)
+    async def all_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.filter_mode = "all"
+        await self._update_message(interaction)
+
+    @discord.ui.button(label="Owned", style=discord.ButtonStyle.secondary)
+    async def owned_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.filter_mode = "owned"
+        await self._update_message(interaction)
+
+    @discord.ui.button(label="Not Owned", style=discord.ButtonStyle.secondary)
+    async def not_owned_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.filter_mode = "not_owned"
+        await self._update_message(interaction)
 
 
 @client.tree.command(name="index", description="📘 Browse all animals and their drop rates")
 async def index(interaction: discord.Interaction):
-    embed = build_index_embed()
-    await interaction.response.send_message(embed=embed)
+    profile = store.load_profile(str(interaction.user.id))
+    view = IndexView(interaction.user.id, profile)
+    await interaction.response.send_message(embed=view._build_page(), view=view)
 
 
 def rarity_drop_rate_map() -> Dict[str, float]:
     return {rarity: chance for chance, rarity in DROP_TABLE}
+
+
+def rarity_animals(rarity: str) -> List[Animal]:
+    return sorted([a for a in ANIMALS.values() if a.rarity == rarity], key=lambda a: a.animal_id)
+
+
+def spawn_chance_for_animal(animal: Animal) -> float:
+    rarity_chance = rarity_drop_rate_map().get(animal.rarity, 0.0)
+    animals_in_rarity = len(rarity_animals(animal.rarity))
+    if animals_in_rarity == 0:
+        return 0.0
+    return rarity_chance / animals_in_rarity
+
+
+def global_animal_stats(animal_id: str) -> Tuple[int, int, int]:
+    global_data = store.data.get("global", {})
+    hatch_counts = global_data.get("hatch_counts", {})
+    owned_counts = global_data.get("owned_counts", {})
+    sold_counts = global_data.get("sold_counts", {})
+    return (
+        hatch_counts.get(animal_id, 0),
+        owned_counts.get(animal_id, 0),
+        sold_counts.get(animal_id, 0),
+    )
 
 
 @client.event
@@ -886,6 +1005,8 @@ async def stats(interaction: discord.Interaction, animal: str):
         )
         return
     rarity_symbol = dict(RARITY_ORDER)[a.rarity]
+    hatched, owned_global, sold_global = global_animal_stats(a.animal_id)
+    spawn_chance = spawn_chance_for_animal(a)
     msg = (
         f"{rarity_symbol} {a.emoji} {a.animal_id}\n"
         f"Role: {ROLE_EMOJI[a.role]} {a.role}\n\n"
@@ -893,7 +1014,11 @@ async def stats(interaction: discord.Interaction, animal: str):
         f"⚔️ ATK: {a.atk}\n"
         f"🛡️ DEF: {a.defense}\n\n"
         f"🛡️ Team DEF Aura: +{a.defense}\n"
-        f"🌱 Hatched globally: {store.data['global'].get('hatch_counts', {}).get(a.animal_id, 0)}\n\n"
+        f"🌱 Hatched globally: {hatched}\n"
+        f"🎯 Spawn Chance: {spawn_chance:.2f}%\n"
+        f"🌍 Owned Globally: {owned_global}\n"
+        f"💰 Sold Globally: {sold_global}\n"
+        f"💵 Value: {RARITY_SELL_VALUE[a.rarity]} coins\n\n"
         f"📜 Lore: {LORE.get(a.animal_id, 'Mysterious origins.')}"
     )
     await interaction.response.send_message(msg)
@@ -1054,10 +1179,8 @@ async def hunt(interaction: discord.Interaction, amount_coins: int):
         pool = [a for a in ANIMALS.values() if a.rarity == rarity]
         animal = random.choice(pool)
         profile["zoo"][animal.animal_id] = profile["zoo"].get(animal.animal_id, 0) + 1
-        store.data.setdefault("global", {}).setdefault("hatch_counts", {})
-        store.data["global"]["hatch_counts"][animal.animal_id] = (
-            store.data["global"]["hatch_counts"].get(animal.animal_id, 0) + 1
-        )
+        store.record_hatch(animal.animal_id)
+        store.adjust_owned_count(animal.animal_id, 1)
         results.append(animal)
 
     profile["cooldowns"]["hunt"] = now_ts + 10
@@ -1156,6 +1279,8 @@ async def sell(
             profile["zoo"][animal_obj.animal_id] = max(0, current_amount - qty)
             total_coins += qty * RARITY_SELL_VALUE[animal_obj.rarity]
             total_sold += qty
+            store.adjust_owned_count(animal_obj.animal_id, -qty)
+            store.record_sale(animal_obj.animal_id, qty)
         profile["coins"] += total_coins
         store.save_profile(profile)
         return total_sold, total_coins
