@@ -78,6 +78,13 @@ ROLE_EMOJI = {
 #   "rainbow": 0,
 # }
 MUTATIONS = ["none", "golden", "diamond", "emerald", "rainbow"]
+MUTATION_ALIASES = {
+    "none": {"none", "normal", "base"},
+    "golden": {"golden", "gold", "g"},
+    "diamond": {"diamond", "dia", "d"},
+    "emerald": {"emerald", "emer", "em"},
+    "rainbow": {"rainbow", "rb", "rain"},
+}
 MUTATION_META = {
     "none": {"emoji": "", "multiplier": 1.0, "ability_multiplier": 1.0},
     "golden": {
@@ -105,6 +112,9 @@ MUTATION_META = {
 
 def normalize_mutation_key(value: str) -> str:
     key = value.strip().lower()
+    for canonical, aliases in MUTATION_ALIASES.items():
+        if key == canonical or key in aliases:
+            return canonical
     if key not in MUTATIONS:
         raise ValueError(f"Unknown mutation key: {value}")
     return key
@@ -125,6 +135,12 @@ def roll_mutation() -> str:
     if roll < 1.0 + 2.5 + 5.0 + 10.0:
         return "golden"
     return "none"
+
+
+def format_mutation_label(mutation: str) -> str:
+    mutation_key = normalize_mutation_key(mutation)
+    emoji = MUTATION_META[mutation_key]["emoji"]
+    return f"{mutation_key.capitalize()} {emoji}".strip()
 
 
 def get_owned_count(profile: Dict, animal_id: str, mutation: str) -> int:
@@ -695,6 +711,39 @@ def sellable_species_amount(profile: Dict, animal_id: str) -> int:
     owned = total_owned_species(profile, animal_id)
     reserved = reserved_species_count(profile.get("team", {}), animal_id)
     return max(0, owned - reserved)
+
+
+def roll_fusion_result(input_mutation: str) -> Tuple[str, int]:
+    mutation = normalize_mutation_key(input_mutation)
+    roll = random.random() * 100
+
+    if mutation == "none":
+        if roll < 50:
+            return "golden", 1
+        if roll < 75:
+            return "diamond", 1
+        if roll < 95:
+            return "emerald", 1
+        return "rainbow", 1
+
+    if mutation == "golden":
+        if roll < 50:
+            return "diamond", 1
+        if roll < 90:
+            return "emerald", 1
+        return "rainbow", 1
+
+    if mutation == "diamond":
+        if roll < 75:
+            return "emerald", 1
+        return "rainbow", 1
+
+    if mutation == "emerald":
+        if roll < 50:
+            return "emerald", 3
+        return "rainbow", 1
+
+    raise ValueError("Rainbow mutation cannot be fused")
 
 
 def add_food(profile: Dict, food_id: str, amount: int) -> None:
@@ -1895,6 +1944,91 @@ async def sell(
     await interaction.response.send_message(
         f"✅ SOLD\n{plan[0][0].emoji} x{total_sold}\n💰 Coins: +{total_coins}"
     )
+
+
+@client.tree.command(name="fuse", description="⚒️ Fuse four animals into a higher mutation")
+@app_commands.describe(
+    animal="Emoji or alias of the animal to fuse",
+    mutation="Mutation tier (none, golden, diamond, emerald)",
+)
+async def fuse(interaction: discord.Interaction, animal: str, mutation: str):
+    a = resolve_animal(animal)
+    if not a:
+        await interaction.response.send_message(
+            "❌ Unknown animal\nTry an emoji or alias.", ephemeral=True
+        )
+        return
+
+    try:
+        mutation_key = normalize_mutation_key(mutation)
+    except ValueError:
+        await interaction.response.send_message(
+            "❌ Invalid mutation\nUse none, golden, diamond, emerald, or rainbow.",
+            ephemeral=True,
+        )
+        return
+
+    if mutation_key == "rainbow":
+        await interaction.response.send_message(
+            "❌ Rainbow animals cannot be fused further.", ephemeral=True
+        )
+        return
+
+    profile = store.load_profile(str(interaction.user.id))
+    available = sellable_amount(profile, a.animal_id, mutation_key)
+    if available < 4:
+        await interaction.response.send_message(
+            "❌ Not enough to fuse\n"
+            f"Need 4 of the same mutation. Available after team reservations: {available}.",
+            ephemeral=True,
+        )
+        return
+
+    removed = remove_animal(profile, a.animal_id, mutation_key, 4)
+    if removed < 4:
+        await interaction.response.send_message(
+            "❌ Fusion failed\nInventory changed before fusion could complete.",
+            ephemeral=True,
+        )
+        return
+
+    result_mutation, result_qty = roll_fusion_result(mutation_key)
+    add_animal(profile, a.animal_id, result_mutation, result_qty)
+
+    owned_delta = result_qty - removed
+    store.adjust_owned_count(a.animal_id, owned_delta)
+    store.save_profile(profile)
+
+    remaining_consumed = get_owned_count(profile, a.animal_id, mutation_key)
+    remaining_result = get_owned_count(profile, a.animal_id, result_mutation)
+
+    inventory_lines = [f"{format_mutation_label(mutation_key)}: x{remaining_consumed}"]
+    if result_mutation != mutation_key:
+        inventory_lines.append(
+            f"{format_mutation_label(result_mutation)}: x{remaining_result}"
+        )
+    else:
+        inventory_lines[0] = f"{format_mutation_label(result_mutation)}: x{remaining_result}"
+
+    embed = discord.Embed(title="⚒️ Fusion Complete", color=0xF1C40F)
+    embed.add_field(
+        name="Consumed",
+        value=(
+            f"{a.emoji} {a.animal_id} x4 "
+            f"({format_mutation_label(mutation_key)})"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Result",
+        value=(
+            f"{a.emoji} {a.animal_id} x{result_qty} "
+            f"({format_mutation_label(result_mutation)})"
+        ),
+        inline=False,
+    )
+    embed.add_field(name="Inventory", value="\n".join(inventory_lines), inline=False)
+    await interaction.response.send_message(embed=embed)
 
 
 @client.tree.command(name="battle", description="⚔️ Battle an enemy bot for rewards")
