@@ -477,8 +477,8 @@ class MyClient(discord.Client):
     async def setup_hook(self):
         dev_guild = discord.Object(id=DEV_GUILD_ID)
 
-        # Register every slash command to the dev guild for instant availability.
-        self.tree.copy_global_to(guild=dev_guild)
+        # Ensure the guild command set is refreshed without touching global commands.
+        self.tree.clear_commands(guild=dev_guild)
         synced = await self.tree.sync(guild=dev_guild)
         print(f"⚡ Synced {len(synced)} guild slash commands")
 
