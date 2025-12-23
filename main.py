@@ -140,15 +140,14 @@ def mutation_badge(mutation_key: str) -> str:
 
 
 def surround_mutated_emoji(animal_emoji: str, mutation_key: str) -> str:
-    mutation_key = normalize_mutation_key(mutation_key)
-    emoji = MUTATION_META[mutation_key]["emoji"]
-    if not emoji:
-        return animal_emoji
-    return f"{emoji} {animal_emoji} {emoji}"
+    # Keep the base emoji unchanged for all mutations to avoid ambiguous visuals.
+    return animal_emoji
 
 
 def format_variant(animal_emoji: str, animal_name: str, mutation_key: str) -> str:
-    return f"{surround_mutated_emoji(animal_emoji, mutation_key)} {animal_name}"
+    base = f"{surround_mutated_emoji(animal_emoji, mutation_key)} {animal_name}"
+    badge = mutation_badge(mutation_key)
+    return base if not badge else f"{base} {badge}"
 
 
 def format_variant_count(animal_emoji: str, mutation_key: str, count: int) -> str:
