@@ -77,47 +77,107 @@ ROLE_EMOJI = {
 #   "emerald": 0,
 #   "rainbow": 0,
 # }
-MUTATIONS = ["none", "golden", "diamond", "emerald", "rainbow"]
+MUTATION_ORDER = ["none", "golden", "diamond", "emerald", "rainbow"]
+MUTATIONS = MUTATION_ORDER
 MUTATION_ALIASES = {
-    "none": {"none", "normal", "base"},
+    "none": {"none", "normal", "base", "n"},
     "golden": {"golden", "gold", "g"},
     "diamond": {"diamond", "dia", "d"},
-    "emerald": {"emerald", "emer", "em"},
-    "rainbow": {"rainbow", "rb", "rain"},
+    "emerald": {"emerald", "emer", "em", "e"},
+    "rainbow": {"rainbow", "rb", "rain", "r"},
 }
 MUTATION_META = {
     "none": {"emoji": "", "multiplier": 1.0, "ability_multiplier": 1.0},
     "golden": {
         "emoji": "<a:9922yellowfire:1392567259687551037>",
-        "multiplier": 1.0,
+        "multiplier": 1.25,
         "ability_multiplier": 1.25,
     },
     "diamond": {
         "emoji": "<a:3751bluefire:1392567237453545524>",
-        "multiplier": 1.0,
+        "multiplier": 1.5,
         "ability_multiplier": 1.5,
     },
     "emerald": {
         "emoji": "<a:9922greenfire:1392567257821089994>",
-        "multiplier": 1.0,
+        "multiplier": 2.0,
         "ability_multiplier": 2.0,
     },
     "rainbow": {
         "emoji": "<a:8308rainbowfire:1392567255170158780>",
-        "multiplier": 1.0,
+        "multiplier": 5.0,
         "ability_multiplier": 5.0,
     },
 }
 
 
 def normalize_mutation_key(value: str) -> str:
-    key = value.strip().lower()
+    key = (value or "").strip().lower()
     for canonical, aliases in MUTATION_ALIASES.items():
         if key == canonical or key in aliases:
             return canonical
-    if key not in MUTATIONS:
-        raise ValueError(f"Unknown mutation key: {value}")
-    return key
+    if key in MUTATIONS:
+        return key
+    raise ValueError(f"Unknown mutation key: {value}")
+
+
+def _format_multiplier(multiplier: float) -> str:
+    return f"{multiplier:g}"
+
+
+def mutation_badge(mutation_key: str) -> str:
+    mutation_key = normalize_mutation_key(mutation_key)
+    if mutation_key == "none":
+        return ""
+    meta = MUTATION_META[mutation_key]
+    multiplier_text = _format_multiplier(meta["multiplier"])
+    return f"{meta['emoji']} (x{multiplier_text})"
+
+
+def surround_mutated_emoji(animal_emoji: str, mutation_key: str) -> str:
+    mutation_key = normalize_mutation_key(mutation_key)
+    emoji = MUTATION_META[mutation_key]["emoji"]
+    if not emoji:
+        return animal_emoji
+    return f"{emoji} {animal_emoji} {emoji}"
+
+
+def format_variant(animal_emoji: str, animal_name: str, mutation_key: str) -> str:
+    return f"{surround_mutated_emoji(animal_emoji, mutation_key)} {animal_name}"
+
+
+def format_variant_count(animal_emoji: str, mutation_key: str, count: int) -> str:
+    mutation_key = normalize_mutation_key(mutation_key)
+    base = f"{surround_mutated_emoji(animal_emoji, mutation_key)} x{count}"
+    badge = mutation_badge(mutation_key)
+    return base if not badge else f"{base} {badge}"
+
+
+def format_owned_summary(animal_name_plural: str, animal_emoji: str, per_mutation_counts: Dict[str, int]) -> str:
+    canonical_counts = {normalize_mutation_key(k): v for k, v in per_mutation_counts.items()}
+    total_owned = sum(max(0, int(v)) for v in canonical_counts.values())
+
+    if total_owned == 0:
+        return f"You own 0 {animal_name_plural}."
+
+    pieces: List[str] = []
+    for mutation in MUTATION_ORDER:
+        count = int(canonical_counts.get(mutation, 0))
+        if count > 0:
+            pieces.append(format_variant_count(animal_emoji, mutation, count))
+
+    joined_counts = ", ".join(pieces)
+    return f"You own {total_owned} {animal_name_plural}: {joined_counts}"
+
+
+def pluralize(animal_id: str) -> str:
+    if animal_id.endswith("fish"):
+        return animal_id
+    if animal_id.endswith("fox"):
+        return f"{animal_id[:-3]}foxes"
+    if animal_id.endswith("mouse"):
+        return f"{animal_id[:-5]}mice"
+    return f"{animal_id}s"
 
 
 def default_mutation_counts() -> Dict[str, int]:
@@ -151,11 +211,43 @@ def get_owned_count(profile: Dict, animal_id: str, mutation: str) -> int:
     return max(0, int(zoo_entry if zoo_entry else 0)) if mutation == "none" else 0
 
 
-def total_owned_species(profile: Dict, animal_id: str) -> int:
-    zoo_entry = profile.get("zoo", {}).get(animal_id, {})
+def mutation_bucket(profile: Dict, animal_id: str) -> Dict[str, int]:
+    zoo_entry = profile.get("zoo", {}).get(animal_id, default_mutation_counts())
     if isinstance(zoo_entry, dict):
-        return sum(max(0, int(qty)) for qty in zoo_entry.values())
-    return max(0, int(zoo_entry if zoo_entry else 0))
+        bucket = default_mutation_counts()
+        for key, qty in zoo_entry.items():
+            try:
+                normalized = normalize_mutation_key(key)
+                qty_int = int(qty)
+            except (ValueError, TypeError):
+                continue
+            bucket[normalized] = max(0, qty_int)
+        return bucket
+    try:
+        bucket = default_mutation_counts()
+        bucket["none"] = max(0, int(zoo_entry))
+        return bucket
+    except (ValueError, TypeError):
+        return default_mutation_counts()
+
+
+def total_owned_species(profile: Dict, animal_id: str) -> int:
+    bucket = mutation_bucket(profile, animal_id)
+    return sum(max(0, int(qty)) for qty in bucket.values())
+
+
+def aggregate_mutation_totals(profile: Dict) -> Dict[str, int]:
+    totals = default_mutation_counts()
+    for animal_id in profile.get("zoo", {}):
+        bucket = mutation_bucket(profile, animal_id)
+        for mutation, qty in bucket.items():
+            totals[mutation] = totals.get(mutation, 0) + max(0, int(qty))
+    return totals
+
+
+def total_animals_owned(profile: Dict) -> int:
+    totals = aggregate_mutation_totals(profile)
+    return sum(totals.values())
 
 
 def add_animal(profile: Dict, animal_id: str, mutation: str, qty: int) -> None:
@@ -572,6 +664,8 @@ class DataStore:
             "cooldowns": {"hunt": 0.0, "battle": 0.0},
             "last_enemy_signature": None,
             "battles_won": 0,
+            "total_hunts": 0,
+            "level": 1,
         }
 
     def load_profile(self, user_id: str) -> Dict:
@@ -581,6 +675,10 @@ class DataStore:
         profile = self.data["users"][user_id]
         if self._migrate_profile(user_id, profile):
             self._write_data()
+        if profile.get("battles_won") is None:
+            profile["battles_won"] = 0
+        profile["total_hunts"] = int(profile.get("total_hunts", 0))
+        profile["level"] = compute_level(profile.get("battles_won", 0))
         return profile
 
     def save_profile(self, profile: Dict) -> None:
@@ -667,6 +765,16 @@ def format_cooldown(seconds_left: float) -> str:
     if minutes:
         return f"{minutes}m {secs}s"
     return f"{secs}s"
+
+
+def compute_level(battles_won: int) -> int:
+    wins = max(0, int(battles_won))
+    level = 1
+    threshold = 1
+    while wins >= threshold:
+        level += 1
+        threshold *= 2
+    return level
 
 
 def hp_bar(current: int, maximum: int) -> str:
@@ -988,8 +1096,8 @@ class MyClient(discord.Client):
     async def setup_hook(self):
         dev_guild = discord.Object(id=DEV_GUILD_ID)
 
-        # Ensure the guild command set is refreshed without touching global commands.
-        self.tree.clear_commands(guild=dev_guild)
+        # Sync guild commands after registration without touching global commands.
+        self.tree.copy_global_to(guild=dev_guild)
         synced = await self.tree.sync(guild=dev_guild)
         print(f"⚡ Synced {len(synced)} guild slash commands")
 
@@ -1025,48 +1133,34 @@ def build_help_embed(page: int) -> Optional[discord.Embed]:
             inline=False,
         )
         embed.add_field(
-            name="[💰 Currencies]",
-            value=(
-                "💰 Coins  \n"
-                "• Used for hunting animals  \n\n"
-                "🔋 Energy  \n"
-                "• Required for hunting  \n"
-                "• Gained from battle wins  \n"
-                "• NO LIMIT — stacks forever  "
-            ),
-            inline=False,
-        )
-        embed.add_field(
             name="[🧾 Commands]",
             value=(
                 "/daily        → daily rewards  \n"
                 "/balance      → show coins & energy  \n"
-                "/zoo          → view animals (counts only)  \n"
-                "/index        → global animal index (all drop rates & stats)  \n"
-                "/stats <x>    → view animal stats & lore  \n"
-                "/team view    → see your current team  \n"
-                "/team add     → build your team  \n"
-                "/team remove  → remove from team  \n"
-                "/hunt <amt>   → hunt animals  \n"
+                "/profile      → level, wins, hunts, mutation totals  \n"
+                "/zoo          → view owned animals with mutation variants  \n"
+                "/index        → global animal index with ownership summary  \n"
+                "/stats <x>    → animal stats + your mutation counts  \n"
+                "/hunt         → level-based rolls (5 coins each, shows mutations)  \n"
                 "/battle       → fight enemy teams (embed results)  \n"
-                "/shop         → browse foods  \n"
-                "/buy <food>   → buy a food by emoji or alias  \n"
-                "/inv          → view owned foods  \n"
-                "/use <food> <pos> → equip food (replaces old)  \n"
-                "/sell <x> <n> → sell animals or food"
+                "/team view    → see your current team  \n"
+                "/team add/remove → manage slots  \n"
+                "/fuse         → combine 4 of a mutation tier  \n"
+                "/shop         → browse foods (bonuses only)  \n"
+                "/buy /inv /use → purchase, view, and equip foods  \n"
+                "/sell         → sell animals or food"
             ),
             inline=False,
         )
         embed.add_field(
-            name="[🐾 Animal Input]",
+            name="[💰 Currencies]",
             value=(
-                "Animals can be referenced by:\n"
-                "• Emoji (🐘)\n"
-                "• Alias (elephant)"
+                "💰 Coins → pay 5 coins per /hunt roll  \n"
+                "🔋 Energy → required per hunt roll (earned from wins)"
             ),
             inline=False,
         )
-        embed.set_footer(text="Use /help 2 for battle and food rules")
+        embed.set_footer(text="Use /help 2 for battle, fusing, and foods")
         return embed
 
     if page == 2:
@@ -1080,36 +1174,32 @@ def build_help_embed(page: int) -> Optional[discord.Embed]:
             value=(
                 "Slot 1 → 🛡️ Tank only  \n"
                 "Slot 2 → ⚔️ Attack only  \n"
-                "Slot 3 → 🧪 Support only  "
+                "Slot 3 → 🧪 Support only"
             ),
             inline=False,
         )
         embed.add_field(
             name="[⚔️ Battle Flow]",
             value=(
-                "• Results are sent as clean embeds  \n"
-                "• Enemy scales to your team and equipped food power  \n"
-                "• Difficulty shown as text hint (Weaker / Balanced / Tough)"
+                "• Results show win/lose banner with rewards  \n"
+                "• Enemy preview shows foods + mutations  \n"
+                "• Difficulty hint matches your team power (≈80–130%)"
             ),
             inline=False,
         )
         embed.add_field(
-            name="[📘 Animal Index]",
+            name="[🧬 Fusing & Mutations]",
             value=(
-                "• /index shows every animal regardless of ownership  \n"
-                "• Displays drop rates, base stats, and global hatch counts  \n"
-                "• Use /stats <animal> for detailed view (lore, foods)  \n"
-                "• /zoo remains your personal collection counts"
+                "• /fuse consumes 4 of the same mutation tier (no rainbow fuses)  \n"
+                "• /zoo, /stats, and /index display mutation variants with emojis"
             ),
             inline=False,
         )
         embed.add_field(
-            name="[🍽️ Food System]",
+            name="[🍽️ Food Store]",
             value=(
-                "• 25 foods with matching rarities to animals  \n"
-                "• Equip with /use <food> <slot> (replaces old food instantly)  \n"
-                "• Food boosts stats in battle and enemy scaling  \n"
-                "• Check stock with /shop and your bag with /inv"
+                "• /shop lists emoji, cost, and bonuses (no flavor text)  \n"
+                "• Buy with /buy <emoji/alias>, view with /inv, equip with /use <food> <slot>"
             ),
             inline=False,
         )
@@ -1155,10 +1245,14 @@ def build_index_embed() -> discord.Embed:
     return embed
 
 
-def format_animal_block(animal: Animal, owned_amount: int) -> str:
+def format_animal_block(animal: Animal, mutation_counts: Dict[str, int]) -> str:
+    owned_amount = sum(max(0, int(qty)) for qty in mutation_counts.values())
     owned_indicator = "🟢" if owned_amount > 0 else "🔴"
     spawn_chance = spawn_chance_for_animal(animal)
     hatched, owned_global, sold_global = global_animal_stats(animal.animal_id)
+    owned_summary = format_owned_summary(
+        pluralize(animal.animal_id).replace("_", " "), animal.emoji, mutation_counts
+    )
     return (
         f"{owned_indicator} {animal.emoji} {animal.animal_id}\n"
         f"Role: {ROLE_EMOJI[animal.role]} {animal.role}\n\n"
@@ -1170,8 +1264,8 @@ def format_animal_block(animal: Animal, owned_amount: int) -> str:
         f"🎯 Spawn Chance: {spawn_chance:.2f}%\n"
         f"🌍 Owned Globally: {owned_global}\n"
         f"💰 Sold Globally: {sold_global}\n"
-        f"💵 Value: {RARITY_SELL_VALUE[animal.rarity]} coins\n\n"
-        f"📜 Lore: {LORE.get(animal.animal_id, 'Mysterious origins.')}"
+        f"💵 Value: {RARITY_SELL_VALUE[animal.rarity]} coins\n"
+        f"{owned_summary}"
     )
 
 
@@ -1209,12 +1303,13 @@ class IndexView(discord.ui.View):
         animals = rarity_animals(rarity)
         blocks: List[str] = []
         for animal in animals:
-            owned_amount = total_owned_species(self.profile, animal.animal_id)
+            mutation_counts = mutation_bucket(self.profile, animal.animal_id)
+            owned_amount = sum(max(0, int(qty)) for qty in mutation_counts.values())
             if self.filter_mode == "owned" and owned_amount <= 0:
                 continue
             if self.filter_mode == "not_owned" and owned_amount > 0:
                 continue
-            blocks.append(format_animal_block(animal, owned_amount))
+            blocks.append(format_animal_block(animal, mutation_counts))
 
         embed = build_index_embed()
         filter_titles = {"all": "All", "owned": "Owned", "not_owned": "Not Owned"}
@@ -1338,6 +1433,56 @@ async def balance(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
+@client.tree.command(name="profile", description="🧾 View your player profile")
+async def profile_command(interaction: discord.Interaction):
+    profile = store.load_profile(str(interaction.user.id))
+    battles_won = max(0, int(profile.get("battles_won", 0)))
+    level = compute_level(battles_won)
+    profile["level"] = level
+    next_threshold = 2 ** (level - 1)
+    remaining = max(0, next_threshold - battles_won)
+
+    mutation_totals = aggregate_mutation_totals(profile)
+    total_owned = sum(mutation_totals.values())
+
+    mutation_lines = [f"None: {mutation_totals['none']}"]
+    mutation_lines.append(
+        f"Golden {MUTATION_META['golden']['emoji']} x1.25: {mutation_totals['golden']}"
+    )
+    mutation_lines.append(
+        f"Diamond {MUTATION_META['diamond']['emoji']} x1.5: {mutation_totals['diamond']}"
+    )
+    mutation_lines.append(
+        f"Emerald {MUTATION_META['emerald']['emoji']} x2: {mutation_totals['emerald']}"
+    )
+    mutation_lines.append(
+        f"Rainbow {MUTATION_META['rainbow']['emoji']} x5: {mutation_totals['rainbow']}"
+    )
+
+    embed = discord.Embed(title="🧾 Profile", color=0x9B59B6)
+    embed.add_field(name="Level", value=str(level), inline=True)
+    embed.add_field(name="Battles Won", value=str(battles_won), inline=True)
+    embed.add_field(
+        name="Next Level",
+        value=f"{next_threshold} wins ({remaining} to go)",
+        inline=True,
+    )
+    embed.add_field(name="💰 Coins", value=str(profile.get("coins", 0)), inline=True)
+    embed.add_field(name="🔋 Energy", value=str(profile.get("energy", 0)), inline=True)
+    embed.add_field(
+        name="🏹 Total Hunts", value=str(profile.get("total_hunts", 0)), inline=True
+    )
+    embed.add_field(name="🐾 Animals Owned", value=str(total_owned), inline=True)
+    embed.add_field(
+        name="Mutation Totals",
+        value="\n".join(mutation_lines),
+        inline=False,
+    )
+
+    store.save_profile(profile)
+    await interaction.response.send_message(embed=embed)
+
+
 @client.tree.command(name="daily", description="🎁 Claim your daily coins reward")
 async def daily(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
@@ -1370,19 +1515,46 @@ async def daily(interaction: discord.Interaction):
 @client.tree.command(name="zoo", description="🗂️ View your zoo inventory counts")
 async def zoo(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
-    lines: List[str] = []
+    blocks: List[str] = []
+    zoo_buckets = profile.get("zoo", {})
+
     for rarity, symbol in RARITY_ORDER:
-        animals = [a for a in ANIMALS.values() if a.rarity == rarity]
-        animals.sort(key=lambda a: a.animal_id)
-        entries = []
+        animals = sorted([a for a in ANIMALS.values() if a.rarity == rarity], key=lambda a: a.animal_id)
+        entries: List[str] = []
         for animal in animals:
-            amount = total_owned_species(profile, animal.animal_id)
-            if amount <= 0:
+            bucket = zoo_buckets.get(animal.animal_id, default_mutation_counts())
+            if not isinstance(bucket, dict):
+                try:
+                    bucket = {"none": max(0, int(bucket))}
+                except (TypeError, ValueError):
+                    bucket = default_mutation_counts()
+            total_owned = sum(max(0, int(qty)) for qty in bucket.values())
+            if total_owned <= 0:
                 continue
-            entries.append(f"{animal.emoji} {superscript_number(amount)}")
+            animal_name_plural = pluralize(animal.animal_id).replace("_", " ")
+            entries.append(format_owned_summary(animal_name_plural, animal.emoji, bucket))
         if entries:
-            lines.append(f"{symbol} {rarity.capitalize()}\n" + "  ".join(entries))
-    await interaction.response.send_message("\n\n".join(lines) if lines else "Your zoo is empty.")
+            blocks.append(f"{symbol} {rarity.capitalize()}\n" + "\n".join(entries))
+
+    if not blocks:
+        await interaction.response.send_message("Your zoo is empty.")
+        return
+
+    messages: List[str] = []
+    current_block = ""
+    for block in blocks:
+        candidate = block if not current_block else f"{current_block}\n\n{block}"
+        if len(candidate) > 1900:
+            messages.append(current_block)
+            current_block = block
+        else:
+            current_block = candidate
+    if current_block:
+        messages.append(current_block)
+
+    await interaction.response.send_message(messages[0])
+    for chunk in messages[1:]:
+        await interaction.followup.send(chunk)
 
 
 @client.tree.command(name="shop", description="🛒 Browse the food store")
@@ -1400,7 +1572,10 @@ async def shop(interaction: discord.Interaction):
         value_lines = []
         for food in foods:
             value_lines.append(
-                f"{food.emoji} {food.food_id.replace('_', ' ')} — Cost: {food.cost} | {food.ability}"
+                (
+                    f"{food.emoji} {food.food_id.replace('_', ' ')} — Cost: {food.cost} | "
+                    f"❤️ +{food.hp_bonus} | ⚔️ +{food.atk_bonus} | 🛡️ +{food.def_bonus}"
+                )
             )
         embed.add_field(name=f"{symbol} {rarity.title()}", value="\n".join(value_lines), inline=False)
     embed.set_footer(text="Use /use <food> <slot> to equip")
@@ -1509,6 +1684,11 @@ async def stats(interaction: discord.Interaction, animal: str):
     rarity_symbol = dict(RARITY_ORDER)[a.rarity]
     hatched, owned_global, sold_global = global_animal_stats(a.animal_id)
     spawn_chance = spawn_chance_for_animal(a)
+    profile = store.load_profile(str(interaction.user.id))
+    mutation_counts = mutation_bucket(profile, a.animal_id)
+    owned_summary = format_owned_summary(
+        pluralize(a.animal_id).replace("_", " "), a.emoji, mutation_counts
+    )
     msg = (
         f"{rarity_symbol} {a.emoji} {a.animal_id}\n"
         f"Role: {ROLE_EMOJI[a.role]} {a.role}\n\n"
@@ -1521,7 +1701,7 @@ async def stats(interaction: discord.Interaction, animal: str):
         f"🌍 Owned Globally: {owned_global}\n"
         f"💰 Sold Globally: {sold_global}\n"
         f"💵 Value: {RARITY_SELL_VALUE[a.rarity]} coins\n\n"
-        f"📜 Lore: {LORE.get(a.animal_id, 'Mysterious origins.')}"
+        f"{owned_summary}"
     )
     await interaction.response.send_message(msg)
 
@@ -1650,9 +1830,14 @@ client.tree.add_command(TeamCommands())
 
 
 @client.tree.command(name="hunt", description="🌱 Spend coins and energy to roll animals")
-@app_commands.describe(amount_coins="Coins to spend (divisible by 5)")
-async def hunt(interaction: discord.Interaction, amount_coins: int):
+async def hunt(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
+    profile.setdefault("battles_won", 0)
+    profile.setdefault("total_hunts", 0)
+
+    level = compute_level(profile["battles_won"])
+    profile["level"] = level
+
     now_ts = now()
     if profile["cooldowns"]["hunt"] > now_ts:
         wait = format_cooldown(profile["cooldowns"]["hunt"] - now_ts)
@@ -1660,19 +1845,16 @@ async def hunt(interaction: discord.Interaction, amount_coins: int):
             f"⏳ Cooldown\nTry again in {wait}.", ephemeral=True
         )
         return
-    if amount_coins <= 0 or amount_coins % 5 != 0:
-        await interaction.response.send_message(
-            "❌ Invalid amount\nUse a number divisible by 5 (e.g. 5, 25, 100).",
-            ephemeral=True,
-        )
+
+    rolls = level
+    affordable_rolls = profile["coins"] // 5
+    if affordable_rolls < rolls:
+        rolls = affordable_rolls
+
+    if rolls <= 0:
+        await interaction.response.send_message("❌ Not enough coins", ephemeral=True)
         return
 
-    rolls = amount_coins // 5
-    if profile["coins"] < amount_coins:
-        await interaction.response.send_message(
-            "❌ Not enough coins", ephemeral=True
-        )
-        return
     if profile["energy"] < rolls:
         needed = rolls - profile["energy"]
         await interaction.response.send_message(
@@ -1681,8 +1863,11 @@ async def hunt(interaction: discord.Interaction, amount_coins: int):
         )
         return
 
-    profile["coins"] -= amount_coins
+    coins_spent = rolls * 5
+    profile["coins"] -= coins_spent
     profile["energy"] -= rolls
+
+    profile["total_hunts"] += 1
 
     results: List[Tuple[Animal, str]] = []
     before_counts = {
@@ -1701,31 +1886,37 @@ async def hunt(interaction: discord.Interaction, amount_coins: int):
     profile["cooldowns"]["hunt"] = now_ts + 10
     store.save_profile(profile)
 
-    grouped: Dict[str, Dict[str, int]] = {rarity: {} for rarity, _ in RARITY_ORDER}
-    for animal, _mutation in results:
-        grouped[animal.rarity][animal.animal_id] = grouped[animal.rarity].get(
-            animal.animal_id, 0
-        ) + 1
+    grouped: Dict[str, Dict[str, Dict[str, int]]] = {
+        rarity: {} for rarity, _ in RARITY_ORDER
+    }
+    for animal, rolled_mutation in results:
+        animal_bucket = grouped[animal.rarity].setdefault(animal.animal_id, {})
+        animal_bucket[rolled_mutation] = animal_bucket.get(rolled_mutation, 0) + 1
 
     lines = ["🌱 Hunt Results", "────────────────"]
 
     for rarity, symbol in RARITY_ORDER:
-        animals = grouped[rarity]
-        if not animals:
+        animals_by_mutation = grouped[rarity]
+        if not animals_by_mutation:
             continue
         entries = []
-        for animal_id, count in sorted(animals.items()):
+        for animal_id in sorted(animals_by_mutation.keys()):
             animal = ANIMALS[animal_id]
             is_new = before_counts.get(animal_id, 0) == 0
             new_tag = " 🆕" if is_new else ""
-            entries.append(f"{animal.emoji} {superscript_number(count)}{new_tag}")
+            for mutation in MUTATION_ORDER:
+                count = animals_by_mutation[animal_id].get(mutation, 0)
+                if count <= 0:
+                    continue
+                variant = format_variant_count(animal.emoji, mutation, count)
+                entries.append(f"{variant}{new_tag}")
         lines.append("")
         lines.append(f"{symbol} {rarity.capitalize()}")
         lines.append("  ".join(entries))
 
     lines.append("")
     lines.append("────────────────")
-    lines.append(f"💰 Coins spent: {amount_coins}")
+    lines.append(f"💰 Coins spent: {coins_spent}")
     lines.append(f"🔋 Energy used: {rolls}")
 
     await interaction.response.send_message("\n".join(lines))
