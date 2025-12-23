@@ -1458,7 +1458,7 @@ async def battle(interaction: discord.Interaction):
                 allowed.add(idx)
         allowed_indices = sorted(allowed)
 
-        player_power = sum(power(a) + food_power(player_foods[f"slot{i}"]) for i, a in player_animals.items())
+        player_power = sum(power(a) + food_power(player_foods[slot]) for slot, a in player_animals.items())
         enemy_multiplier = random.uniform(0.85, 1.3)
         target_power = player_power * enemy_multiplier
 
