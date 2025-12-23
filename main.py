@@ -475,32 +475,18 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        await self.tree.sync()
+        dev_guild = discord.Object(id=DEV_GUILD_ID)
+
+        # Register every slash command to the dev guild for instant availability.
+        self.tree.copy_global_to(guild=dev_guild)
+        synced = await self.tree.sync(guild=dev_guild)
+        print(f"⚡ Synced {len(synced)} guild slash commands")
 
 
 client = MyClient()
 
 
 DEV_GUILD_ID = 1452648204519739483  # your server
-
-@client.event
-async def on_ready():
-    print(f"Logged in as {client.user} ({client.user.id})")
-
-    # Global sync (slow, but for all servers)
-    try:
-        await client.tree.sync()
-        print("🌍 Global slash commands synced")
-    except Exception as e:
-        print("❌ Global sync failed:", e)
-
-    # Dev guild sync (instant)
-    try:
-        dev_guild = discord.Object(id=DEV_GUILD_ID)
-        await client.tree.sync(guild=dev_guild)
-        print("⚡ Dev guild slash commands synced")
-    except Exception as e:
-        print("❌ Dev guild sync failed:", e)
 
 
 def build_help_embed(page: int) -> Optional[discord.Embed]:
@@ -1472,34 +1458,13 @@ async def battle(interaction: discord.Interaction):
 
 
 
-
-DEV_GUILD_ID = 1452648204519739483
-
 @client.event
 async def on_ready():
+    print(f"Logged in as {client.user} ({client.user.id})")
     print("====== COMMAND DEBUG ======")
     for cmd in client.tree.get_commands():
         print("-", cmd.name)
     print("===========================")
-
-    dev_guild = discord.Object(id=DEV_GUILD_ID)
-
-    # 🔥 Clear ONCE (comment this out after success)
-    client.tree.clear_commands(guild=dev_guild)
-    await client.tree.sync(guild=dev_guild)
-    print("🧹 Cleared guild commands")
-
-    # ⚡ Re-sync
-    synced = await client.tree.sync(guild=dev_guild)
-    print(f"⚡ Re-synced {len(synced)} guild commands")
-
-    # 🌍 Global sync
-    await client.tree.sync()
-    print("🌍 Global sync requested")
-
-    # IMPORTANT: DO NOTHING ELSE HERE
-    # Do NOT exit
-    # Do NOT stop the loop
 
 
 
