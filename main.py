@@ -348,6 +348,25 @@ def resolve_food(query: str) -> Optional[Food]:
     return None
 
 
+def chunk_text_blocks(blocks: List[str], limit: int = 1024, separator: str = "\n\n") -> List[str]:
+    chunks: List[str] = []
+    current: List[str] = []
+    current_length = 0
+    for block in blocks:
+        block_length = len(block)
+        sep_length = len(separator) if current else 0
+        if current and current_length + sep_length + block_length > limit:
+            chunks.append(separator.join(current))
+            current = [block]
+            current_length = block_length
+        else:
+            current.append(block)
+            current_length += sep_length + block_length
+    if current:
+        chunks.append(separator.join(current))
+    return chunks
+
+
 def now() -> float:
     return time.time()
 
@@ -534,6 +553,7 @@ def build_help_embed(page: int) -> Optional[discord.Embed]:
                 "/hunt <amt>   → hunt animals  \n"
                 "/battle       → fight enemy teams (embed results)  \n"
                 "/shop         → browse foods  \n"
+                "/buy <food>   → buy a food by emoji or alias  \n"
                 "/inv          → view owned foods  \n"
                 "/use <food> <pos> → equip food (replaces old)  \n"
                 "/sell <x> <n> → sell animals or food"
@@ -666,7 +686,10 @@ def build_index_embed() -> discord.Embed:
                     ]
                 )
             )
-        embed.add_field(name=f"{emoji} {rarity}", value="\n\n".join(lines), inline=False)
+        chunked_values = chunk_text_blocks(lines)
+        for idx, block in enumerate(chunked_values):
+            name = f"{emoji} {rarity}" if idx == 0 else f"{emoji} {rarity} (cont.)"
+            embed.add_field(name=name, value=block, inline=False)
 
     embed.set_footer(text="Use /stats <animal> for full details.")
     return embed
@@ -774,6 +797,39 @@ async def shop(interaction: discord.Interaction):
             )
         embed.add_field(name=f"{symbol} {rarity.title()}", value="\n".join(value_lines), inline=False)
     embed.set_footer(text="Use /use <food> <slot> to equip")
+    await interaction.response.send_message(embed=embed)
+
+
+@client.tree.command(name="buy", description="🧺 Buy a food by emoji or alias")
+@app_commands.describe(food="Food emoji or alias")
+async def buy(interaction: discord.Interaction, food: str):
+    food_obj = resolve_food(food)
+    if not food_obj:
+        await interaction.response.send_message(
+            "❌ Unknown food. Try an emoji or alias listed in /shop.", ephemeral=True
+        )
+        return
+
+    profile = store.load_profile(str(interaction.user.id))
+    if profile["coins"] < food_obj.cost:
+        await interaction.response.send_message(
+            f"❌ Not enough coins. {food_obj.emoji} costs {food_obj.cost} coins.",
+            ephemeral=True,
+        )
+        return
+
+    profile["coins"] -= food_obj.cost
+    profile["foods"][food_obj.food_id] = profile["foods"].get(food_obj.food_id, 0) + 1
+    store.save_profile(profile)
+
+    embed = discord.Embed(
+        title="✅ Purchase Successful",
+        description=f"You bought {food_obj.emoji} {food_obj.food_id.replace('_', ' ')}.",
+        color=0x2ECC71,
+    )
+    embed.add_field(name="Cost", value=f"- {food_obj.cost} coins", inline=False)
+    embed.add_field(name="Coins Left", value=str(profile["coins"]), inline=False)
+    embed.set_footer(text="Equip it with /use <food> <slot>")
     await interaction.response.send_message(embed=embed)
 
 
