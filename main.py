@@ -1209,7 +1209,7 @@ class IndexView(discord.ui.View):
         animals = rarity_animals(rarity)
         blocks: List[str] = []
         for animal in animals:
-            owned_amount = self.profile.get("zoo", {}).get(animal.animal_id, 0)
+            owned_amount = total_owned_species(self.profile, animal.animal_id)
             if self.filter_mode == "owned" and owned_amount <= 0:
                 continue
             if self.filter_mode == "not_owned" and owned_amount > 0:
