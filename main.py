@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import random
@@ -2500,6 +2501,28 @@ async def on_ready():
 
 
 
+async def run_bot_with_backoff():
+    """Run the Discord bot, backing off when login is rate limited."""
+
+    backoff_seconds = 60
+    max_backoff_seconds = 600
+
+    while True:
+        try:
+            await client.start(TOKEN)
+            break
+        except discord.HTTPException as exc:
+            if exc.status == 429:
+                retry_after = getattr(exc, "retry_after", None) or backoff_seconds
+                print(
+                    "⚠️  Login hit global rate limit. "
+                    f"Waiting {retry_after} seconds before retrying."
+                )
+                backoff_seconds = min(backoff_seconds * 2, max_backoff_seconds)
+                await asyncio.sleep(retry_after)
+                continue
+            raise
+
 
 if __name__ == "__main__":
-    client.run(TOKEN)
+    asyncio.run(run_bot_with_backoff())
