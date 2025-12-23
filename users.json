@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 3,
   "users": {
     "1317419437854560288": {
       "user_id": "1317419437854560288",
@@ -37,9 +37,163 @@
         "battle": 1766420382.30323
       },
       "last_enemy_signature": "elephant|dolphin|swan_epic"
+    },
+    "1423620048521793607": {
+      "user_id": "1423620048521793607",
+      "coins": 29,
+      "energy": 25,
+      "zoo": {
+        "tropicalfish": {
+          "none": 1,
+          "golden": 1,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "parrot": {
+          "none": 1,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "sheep": {
+          "none": 2,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "fish": {
+          "none": 2,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "chicken": {
+          "none": 1,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "dog": {
+          "none": 1,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "bug": {
+          "none": 1,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "bird": {
+          "none": 2,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "ant": {
+          "none": 1,
+          "golden": 1,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "deer": {
+          "none": 1,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "turtle": {
+          "none": 0,
+          "golden": 1,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        }
+      },
+      "team": {
+        "slot1": {
+          "animal_id": "sheep",
+          "mutation": "none"
+        },
+        "slot2": {
+          "animal_id": "fish",
+          "mutation": "none"
+        },
+        "slot3": {
+          "animal_id": "parrot",
+          "mutation": "none"
+        }
+      },
+      "foods": {},
+      "equipped_foods": {
+        "slot1": null,
+        "slot2": null,
+        "slot3": null
+      },
+      "equipped_food_wins": {
+        "slot1": 0,
+        "slot2": 0,
+        "slot3": 0
+      },
+      "cooldowns": {
+        "hunt": 1766524775.4403896,
+        "battle": 1766524770.841314
+      },
+      "last_enemy_signature": "turtle:none|fish:none|tropicalfish:golden",
+      "battles_won": 1,
+      "total_hunts": 10,
+      "level": 2
     }
   },
   "global": {
-    "hatch_counts": {}
+    "hatch_counts": {
+      "tropicalfish": 2,
+      "parrot": 1,
+      "sheep": 2,
+      "fish": 2,
+      "chicken": 1,
+      "dog": 1,
+      "bug": 1,
+      "bird": 2,
+      "ant": 2,
+      "deer": 1,
+      "turtle": 1
+    },
+    "owned_counts": {
+      "deer": 3,
+      "dolphin": 1,
+      "goat": 2,
+      "dog": 2,
+      "fish": 4,
+      "mouse": 3,
+      "bug": 5,
+      "sheep": 5,
+      "chicken": 5,
+      "mammoth": 0,
+      "fox": 2,
+      "crocodile": 1,
+      "ram": 2,
+      "tropicalfish": 4,
+      "cow": 5,
+      "wolf": 1,
+      "bird": 3,
+      "owl": 1,
+      "ant": 3,
+      "horse": 1,
+      "parrot": 1,
+      "turtle": 1
+    },
+    "sold_counts": {}
   }
 }
