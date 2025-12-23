@@ -1099,7 +1099,6 @@ class MyClient(discord.Client):
 
     async def setup_hook(self):
         # Sync commands only to the development guild to avoid duplicate global entries.
-        await self.tree.sync()
         synced = await self.tree.sync(guild=DEV_GUILD)
         print(f"⚡ Synced {len(synced)} guild slash commands")
 
