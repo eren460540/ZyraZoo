@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "users": {
+    "1317419437854560288": {
+      "user_id": "1317419437854560288",
+      "coins": 4,
+      "energy": 4,
+      "zoo": {
+        "deer": 2,
+        "dolphin": 1,
+        "goat": 2,
+        "dog": 1,
+        "fish": 2,
+        "mouse": 3,
+        "bug": 4,
+        "sheep": 3,
+        "chicken": 4,
+        "mammoth": 0,
+        "fox": 2,
+        "crocodile": 1,
+        "ram": 2,
+        "tropicalfish": 2,
+        "cow": 5,
+        "wolf": 1,
+        "bird": 1,
+        "owl": 1,
+        "ant": 1,
+        "horse": 1
+      },
+      "team": {
+        "slot1": null,
+        "slot2": "dolphin",
+        "slot3": "bug"
+      },
+      "cooldowns": {
+        "hunt": 1766420465.8915439,
+        "battle": 1766420382.30323
+      },
+      "last_enemy_signature": "elephant|dolphin|swan_epic"
+    }
+  },
+  "global": {
+    "hatch_counts": {}
+  }
+}
