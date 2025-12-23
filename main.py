@@ -66,6 +66,123 @@ ROLE_EMOJI = {
 }
 
 
+# Mutation tiers attached to owned animal instances.
+# Schema (per animal_id):
+# {
+#   "none": 2,
+#   "golden": 1,
+#   "diamond": 0,
+#   "emerald": 0,
+#   "rainbow": 0,
+# }
+MUTATIONS = ["none", "golden", "diamond", "emerald", "rainbow"]
+MUTATION_META = {
+    "none": {"emoji": "", "multiplier": 1.0, "ability_multiplier": 1.0},
+    "golden": {
+        "emoji": "<a:9922yellowfire:1392567259687551037>",
+        "multiplier": 1.0,
+        "ability_multiplier": 1.25,
+    },
+    "diamond": {
+        "emoji": "<a:3751bluefire:1392567237453545524>",
+        "multiplier": 1.0,
+        "ability_multiplier": 1.5,
+    },
+    "emerald": {
+        "emoji": "<a:9922greenfire:1392567257821089994>",
+        "multiplier": 1.0,
+        "ability_multiplier": 2.0,
+    },
+    "rainbow": {
+        "emoji": "<a:8308rainbowfire:1392567255170158780>",
+        "multiplier": 1.0,
+        "ability_multiplier": 5.0,
+    },
+}
+
+
+def normalize_mutation_key(value: str) -> str:
+    key = value.strip().lower()
+    if key not in MUTATIONS:
+        raise ValueError(f"Unknown mutation key: {value}")
+    return key
+
+
+def default_mutation_counts() -> Dict[str, int]:
+    return {mutation: 0 for mutation in MUTATIONS}
+
+
+def roll_mutation() -> str:
+    roll = random.random() * 100
+    if roll < 1.0:
+        return "rainbow"
+    if roll < 1.0 + 2.5:
+        return "emerald"
+    if roll < 1.0 + 2.5 + 5.0:
+        return "diamond"
+    if roll < 1.0 + 2.5 + 5.0 + 10.0:
+        return "golden"
+    return "none"
+
+
+def get_owned_count(profile: Dict, animal_id: str, mutation: str) -> int:
+    mutation = normalize_mutation_key(mutation)
+    zoo_entry = profile.get("zoo", {}).get(animal_id, {})
+    if isinstance(zoo_entry, dict):
+        return max(0, int(zoo_entry.get(mutation, 0)))
+    return max(0, int(zoo_entry if zoo_entry else 0)) if mutation == "none" else 0
+
+
+def total_owned_species(profile: Dict, animal_id: str) -> int:
+    zoo_entry = profile.get("zoo", {}).get(animal_id, {})
+    if isinstance(zoo_entry, dict):
+        return sum(max(0, int(qty)) for qty in zoo_entry.values())
+    return max(0, int(zoo_entry if zoo_entry else 0))
+
+
+def add_animal(profile: Dict, animal_id: str, mutation: str, qty: int) -> None:
+    mutation = normalize_mutation_key(mutation)
+    qty = max(0, int(qty))
+    if qty <= 0:
+        return
+    zoo = profile.setdefault("zoo", {})
+    current = zoo.get(animal_id, {})
+    if not isinstance(current, dict):
+        current = {"none": max(0, int(current))}
+    bucket = default_mutation_counts()
+    for key, value in current.items():
+        try:
+            normalized_key = normalize_mutation_key(key)
+        except ValueError:
+            continue
+        bucket[normalized_key] = max(0, int(value))
+    bucket[mutation] = bucket.get(mutation, 0) + qty
+    zoo[animal_id] = bucket
+
+
+def remove_animal(profile: Dict, animal_id: str, mutation: str, qty: int) -> int:
+    mutation = normalize_mutation_key(mutation)
+    qty = max(0, int(qty))
+    if qty <= 0:
+        return 0
+    zoo = profile.setdefault("zoo", {})
+    current = zoo.get(animal_id, {})
+    if not isinstance(current, dict):
+        current = {"none": max(0, int(current))}
+    bucket = default_mutation_counts()
+    for key, value in current.items():
+        try:
+            normalized_key = normalize_mutation_key(key)
+        except ValueError:
+            continue
+        bucket[normalized_key] = max(0, int(value))
+    owned = bucket.get(mutation, 0)
+    removed = min(owned, qty)
+    bucket[mutation] = max(0, owned - removed)
+    zoo[animal_id] = bucket
+    return removed
+
+
 def build_animals() -> Dict[str, Animal]:
     animals: List[Animal] = []
 
@@ -270,7 +387,7 @@ class DataStore:
         if dir_name:
             os.makedirs(dir_name, exist_ok=True)
         if not os.path.exists(self.path):
-            initial_content = {"version": 2, "users": {}, "global": {"hatch_counts": {}}}
+            initial_content = {"version": 3, "users": {}, "global": {"hatch_counts": {}}}
             with open(self.path, "w", encoding="utf-8") as f:
                 json.dump(initial_content, f, indent=2)
         try:
@@ -282,12 +399,23 @@ class DataStore:
 
         if "version" not in data or "users" not in data:
             raise RuntimeError("users.json is missing required keys. Aborting startup.")
+        if data.get("version", 0) < 3:
+            data["version"] = 3
+            migrated_version = True
+        else:
+            migrated_version = False
         data.setdefault("global", {"hatch_counts": {}})
         global_data = data.setdefault("global", {})
         global_data.setdefault("hatch_counts", {})
         global_data.setdefault("owned_counts", {})
         global_data.setdefault("sold_counts", {})
-        global_data["owned_counts"] = self._recalculate_owned_counts(data.get("users", {}))
+        users = data.get("users", {})
+        migrated = migrated_version or self._migrate_users(users)
+        global_data["owned_counts"] = self._recalculate_owned_counts(users)
+        data["users"] = users
+        if migrated:
+            with open(self.path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
         return data
 
     def _recalculate_owned_counts(self, users: Dict[str, Dict]) -> Dict[str, int]:
@@ -295,8 +423,119 @@ class DataStore:
         for profile in users.values():
             zoo = profile.get("zoo", {})
             for animal_id, qty in zoo.items():
-                counts[animal_id] = counts.get(animal_id, 0) + max(0, qty)
+                if isinstance(qty, dict):
+                    total = 0
+                    for v in qty.values():
+                        try:
+                            total += max(0, int(v))
+                        except (TypeError, ValueError):
+                            continue
+                else:
+                    total = max(0, int(qty))
+                counts[animal_id] = counts.get(animal_id, 0) + total
         return counts
+
+    def _migrate_users(self, users: Dict[str, Dict]) -> bool:
+        migrated = False
+        for user_id, profile in users.items():
+            if self._migrate_profile(user_id, profile):
+                migrated = True
+        return migrated
+
+    def _normalize_zoo_entry(self, value) -> Dict[str, int]:
+        if isinstance(value, dict):
+            bucket = default_mutation_counts()
+            for key, qty in value.items():
+                try:
+                    normalized = normalize_mutation_key(key)
+                    qty_int = int(qty)
+                except ValueError:
+                    continue
+                except TypeError:
+                    continue
+                bucket[normalized] = max(0, qty_int)
+            return bucket
+        try:
+            return {"none": max(0, int(value))}
+        except (ValueError, TypeError):
+            return default_mutation_counts()
+
+    def _migrate_profile(self, user_id: str, profile: Dict) -> bool:
+        migrated = False
+        if "user_id" not in profile:
+            profile["user_id"] = user_id
+            migrated = True
+        if "coins" not in profile:
+            profile["coins"] = 0
+            migrated = True
+        if "energy" not in profile:
+            profile["energy"] = 0
+            migrated = True
+        if "zoo" not in profile:
+            profile["zoo"] = {}
+            migrated = True
+        if "team" not in profile:
+            profile["team"] = {"slot1": None, "slot2": None, "slot3": None}
+            migrated = True
+        if "foods" not in profile:
+            profile["foods"] = {}
+            migrated = True
+        if "equipped_foods" not in profile:
+            profile["equipped_foods"] = {"slot1": None, "slot2": None, "slot3": None}
+            migrated = True
+        if "equipped_food_wins" not in profile:
+            profile["equipped_food_wins"] = {"slot1": 0, "slot2": 0, "slot3": 0}
+            migrated = True
+        if "cooldowns" not in profile:
+            profile["cooldowns"] = {"hunt": 0.0, "battle": 0.0}
+            migrated = True
+        if "last_enemy_signature" not in profile:
+            profile["last_enemy_signature"] = None
+            migrated = True
+
+        zoo = profile.get("zoo", {})
+        normalized_zoo: Dict[str, Dict[str, int]] = {}
+        for animal_id, value in zoo.items():
+            normalized_zoo[animal_id] = self._normalize_zoo_entry(value)
+            if value != normalized_zoo[animal_id]:
+                migrated = True
+        profile["zoo"] = normalized_zoo
+
+        team = profile.get("team", {})
+        fixed_team: Dict[str, Optional[Dict[str, str]]] = {}
+        for i in range(1, 4):
+            slot = f"slot{i}"
+            raw_value = team.get(slot)
+            if isinstance(raw_value, str):
+                slot_value = {"animal_id": raw_value, "mutation": "none"}
+                migrated = True
+            elif isinstance(raw_value, dict) and raw_value:
+                mutation = raw_value.get("mutation", "none")
+                try:
+                    mutation = normalize_mutation_key(str(mutation))
+                except ValueError:
+                    mutation = "none"
+                slot_value = {"animal_id": raw_value.get("animal_id"), "mutation": mutation}
+            else:
+                slot_value = None
+
+            if slot_value and slot_value.get("animal_id") in normalized_zoo:
+                bucket = normalized_zoo[slot_value["animal_id"]]
+                if bucket.get(slot_value["mutation"], 0) <= 0:
+                    for mut in MUTATIONS:
+                        if bucket.get(mut, 0) > 0:
+                            slot_value["mutation"] = mut
+                            migrated = True
+                            break
+                    else:
+                        slot_value = None
+                        migrated = True
+            elif slot_value:
+                slot_value = None
+                migrated = True
+            fixed_team[slot] = slot_value
+        profile["team"] = fixed_team
+        return migrated
 
     def _default_profile(self, user_id: str) -> Dict:
         team = {"slot1": None, "slot2": None, "slot3": None}
@@ -318,13 +557,8 @@ class DataStore:
             self.data["users"][user_id] = self._default_profile(user_id)
             self._write_data()
         profile = self.data["users"][user_id]
-        profile.setdefault("cooldowns", {"hunt": 0.0, "battle": 0.0})
-        profile.setdefault("team", {"slot1": None, "slot2": None, "slot3": None})
-        profile.setdefault("zoo", {})
-        profile.setdefault("last_enemy_signature", None)
-        profile.setdefault("foods", {})
-        profile.setdefault("equipped_foods", {"slot1": None, "slot2": None, "slot3": None})
-        profile.setdefault("equipped_food_wins", {"slot1": 0, "slot2": 0, "slot3": 0})
+        if self._migrate_profile(user_id, profile):
+            self._write_data()
         return profile
 
     def save_profile(self, profile: Dict) -> None:
@@ -428,12 +662,33 @@ def superscript_number(num: int) -> str:
     return "".join(SUPERSCRIPT_MAP[d] for d in num_str)
 
 
-def reserved_count(team: Dict[str, Optional[str]], animal_id: str) -> int:
-    return sum(1 for slot in team.values() if slot == animal_id)
+def reserved_count(team: Dict[str, Optional[Dict[str, str]]], animal_id: str, mutation: str) -> int:
+    mutation = normalize_mutation_key(mutation)
+    total = 0
+    for slot in team.values():
+        if not slot or not isinstance(slot, dict):
+            continue
+        if slot.get("animal_id") == animal_id and slot.get("mutation") == mutation:
+            total += 1
+    return total
 
 
-def sellable_amount(profile: Dict, animal_id: str) -> int:
-    return profile["zoo"].get(animal_id, 0) - reserved_count(profile["team"], animal_id)
+def reserved_species_count(team: Dict[str, Optional[Dict[str, str]]], animal_id: str) -> int:
+    return sum(
+        reserved_count(team, animal_id, mutation) for mutation in MUTATIONS
+    )
+
+
+def sellable_amount(profile: Dict, animal_id: str, mutation: str) -> int:
+    owned = get_owned_count(profile, animal_id, mutation)
+    reserved = reserved_count(profile.get("team", {}), animal_id, mutation)
+    return max(0, owned - reserved)
+
+
+def sellable_species_amount(profile: Dict, animal_id: str) -> int:
+    owned = total_owned_species(profile, animal_id)
+    reserved = reserved_species_count(profile.get("team", {}), animal_id)
+    return max(0, owned - reserved)
 
 
 def add_food(profile: Dict, food_id: str, amount: int) -> None:
@@ -895,7 +1150,7 @@ async def zoo(interaction: discord.Interaction):
         animals.sort(key=lambda a: a.animal_id)
         entries = []
         for animal in animals:
-            amount = profile["zoo"].get(animal.animal_id, 0)
+            amount = total_owned_species(profile, animal.animal_id)
             if amount <= 0:
                 continue
             entries.append(f"{animal.emoji} {superscript_number(amount)}")
@@ -1066,7 +1321,8 @@ class TeamCommands(app_commands.Group):
         total_atk = 0
         total_def = 0
         for idx, (slot_key, label) in slot_info.items():
-            animal_id = profile["team"].get(slot_key)
+            slot_value = profile["team"].get(slot_key)
+            animal_id = slot_value.get("animal_id") if isinstance(slot_value, dict) else None
             if animal_id:
                 animal = ANIMALS[animal_id]
                 total_hp += animal.hp
@@ -1125,15 +1381,24 @@ class TeamCommands(app_commands.Group):
             return
 
         profile = store.load_profile(str(interaction.user.id))
-        owned = profile["zoo"].get(a.animal_id, 0)
-        reserved = reserved_count(profile["team"], a.animal_id)
-        if owned <= 0 and reserved == 0:
+        available_total = sellable_species_amount(profile, a.animal_id)
+        if available_total <= 0:
             await interaction.response.send_message(
                 "❌ You don't own that animal yet.", ephemeral=True
             )
             return
+        chosen_mutation = None
+        for mutation in MUTATIONS:
+            if sellable_amount(profile, a.animal_id, mutation) > 0:
+                chosen_mutation = mutation
+                break
+        if not chosen_mutation:
+            await interaction.response.send_message(
+                "❌ That animal is fully reserved on your team.", ephemeral=True
+            )
+            return
 
-        profile["team"][f"slot{pos}"] = a.animal_id
+        profile["team"][f"slot{pos}"] = {"animal_id": a.animal_id, "mutation": chosen_mutation}
         store.save_profile(profile)
         await interaction.response.send_message(
             f"✅ TEAM UPDATED\nSlot {pos}: {ROLE_EMOJI[a.role]} {a.emoji} {a.animal_id}"
@@ -1193,22 +1458,25 @@ async def hunt(interaction: discord.Interaction, amount_coins: int):
     profile["coins"] -= amount_coins
     profile["energy"] -= rolls
 
-    results: List[Animal] = []
-    before_counts = dict(profile["zoo"])
+    results: List[Tuple[Animal, str]] = []
+    before_counts = {
+        animal_id: total_owned_species(profile, animal_id) for animal_id in profile.get("zoo", {})
+    }
     for _ in range(rolls):
         rarity = pick_rarity()
         pool = [a for a in ANIMALS.values() if a.rarity == rarity]
         animal = random.choice(pool)
-        profile["zoo"][animal.animal_id] = profile["zoo"].get(animal.animal_id, 0) + 1
+        mutation = roll_mutation()
+        add_animal(profile, animal.animal_id, mutation, 1)
         store.record_hatch(animal.animal_id)
         store.adjust_owned_count(animal.animal_id, 1)
-        results.append(animal)
+        results.append((animal, mutation))
 
     profile["cooldowns"]["hunt"] = now_ts + 10
     store.save_profile(profile)
 
     grouped: Dict[str, Dict[str, int]] = {rarity: {} for rarity, _ in RARITY_ORDER}
-    for animal in results:
+    for animal, _mutation in results:
         grouped[animal.rarity][animal.animal_id] = grouped[animal.rarity].get(
             animal.animal_id, 0
         ) + 1
@@ -1292,19 +1560,43 @@ async def sell(
 
     profile = store.load_profile(str(interaction.user.id))
 
-    def finalize_sale(changes: List[Tuple[Animal, int]]) -> Tuple[int, int]:
+    def finalize_sale(changes: List[Tuple[Animal, str, int]]) -> Tuple[int, int]:
         total_coins = 0
         total_sold = 0
-        for animal_obj, qty in changes:
-            current_amount = profile["zoo"].get(animal_obj.animal_id, 0)
-            profile["zoo"][animal_obj.animal_id] = max(0, current_amount - qty)
-            total_coins += qty * RARITY_SELL_VALUE[animal_obj.rarity]
-            total_sold += qty
-            store.adjust_owned_count(animal_obj.animal_id, -qty)
-            store.record_sale(animal_obj.animal_id, qty)
+        for animal_obj, mutation, qty in changes:
+            removed = remove_animal(profile, animal_obj.animal_id, mutation, qty)
+            if removed <= 0:
+                continue
+            total_coins += removed * RARITY_SELL_VALUE[animal_obj.rarity]
+            total_sold += removed
+            store.adjust_owned_count(animal_obj.animal_id, -removed)
+            store.record_sale(animal_obj.animal_id, removed)
         profile["coins"] += total_coins
         store.save_profile(profile)
         return total_sold, total_coins
+
+    def allocate_sale(animal_obj: Animal, qty: int) -> List[Tuple[str, int]]:
+        remaining = qty
+        allocations: List[Tuple[str, int]] = []
+        for mutation in MUTATIONS:
+            available = sellable_amount(profile, animal_obj.animal_id, mutation)
+            if available <= 0:
+                continue
+            portion = min(available, remaining)
+            if portion > 0:
+                allocations.append((mutation, portion))
+                remaining -= portion
+            if remaining <= 0:
+                break
+        if remaining > 0:
+            raise RuntimeError("Sale allocation failed due to insufficient inventory")
+        return allocations
+
+    def summarize_plan(changes: List[Tuple[Animal, str, int]]) -> List[Tuple[Animal, int]]:
+        summary: Dict[str, int] = {}
+        for animal_obj, _mutation, qty in changes:
+            summary[animal_obj.animal_id] = summary.get(animal_obj.animal_id, 0) + qty
+        return [(ANIMALS[animal_id], qty) for animal_id, qty in summary.items()]
 
     if mode_value == "food":
         food_obj = resolve_food(target)
@@ -1346,28 +1638,30 @@ async def sell(
                 "❌ Unknown animal\nTry an emoji or alias.", ephemeral=True
             )
             return
-        reserved = reserved_count(profile["team"], a.animal_id)
+        reserved = reserved_species_count(profile["team"], a.animal_id)
         if reserved > 0:
             await interaction.response.send_message(
                 "❌ Cannot sell\nThat animal is currently in your team.\nRemove it from the team first.",
                 ephemeral=True,
             )
             return
-        owned = profile["zoo"].get(a.animal_id, 0)
+        owned = total_owned_species(profile, a.animal_id)
         if owned <= 0:
             await interaction.response.send_message(
                 "❌ Cannot sell\nYou don't own that animal.", ephemeral=True
             )
             return
         sell_amount = owned if sell_all else sell_count or 0
-        if sell_amount > owned:
+        available_amount = sellable_species_amount(profile, a.animal_id)
+        if sell_amount > available_amount:
             await interaction.response.send_message(
-                f"❌ Cannot sell\nYou can sell up to {owned} of that animal.",
+                f"❌ Cannot sell\nYou can sell up to {available_amount} of that animal (team animals are excluded).",
                 ephemeral=True,
             )
             return
 
-        plan = [(a, sell_amount)]
+        allocations = allocate_sale(a, sell_amount)
+        plan = [(a, mutation, qty) for mutation, qty in allocations]
         needs_confirm = a.rarity in {"EPIC", "LEGENDARY", "SPECIAL", "HIDDEN"}
 
     else:
@@ -1378,16 +1672,17 @@ async def sell(
                 ephemeral=True,
             )
             return
-        plan: List[Tuple[Animal, int]] = []
+        plan: List[Tuple[Animal, str, int]] = []
         for animal_obj in ANIMALS.values():
             if animal_obj.rarity != rarity_key:
                 continue
-            available = sellable_amount(profile, animal_obj.animal_id)
-            if available <= 0:
+            available_total = sellable_species_amount(profile, animal_obj.animal_id)
+            if available_total <= 0:
                 continue
-            qty = available if sell_all else min(available, sell_count or 0)
+            qty = available_total if sell_all else min(available_total, sell_count or 0)
             if qty > 0:
-                plan.append((animal_obj, qty))
+                for mutation, portion in allocate_sale(animal_obj, qty):
+                    plan.append((animal_obj, mutation, portion))
         if not plan:
             await interaction.response.send_message(
                 "❌ Cannot sell\nNo animals of that rarity are available (team animals are excluded).",
@@ -1398,9 +1693,10 @@ async def sell(
 
     if needs_confirm:
         embed = discord.Embed(title="⚠️ Confirm Sale", description="You are about to sell the following:")
+        summary = summarize_plan(plan)
         embed.add_field(
             name="Items",
-            value="\n".join(f"{animal.emoji} x{qty}" for animal, qty in plan),
+            value="\n".join(f"{animal.emoji} x{qty}" for animal, qty in summary),
             inline=False,
         )
         view = SellConfirmView(interaction.user.id)
@@ -1434,15 +1730,22 @@ async def battle(interaction: discord.Interaction):
             wait = format_cooldown(profile["cooldowns"]["battle"] - now_ts)
             await interaction.edit_original_response(content=f"⏳ Cooldown\nTry again in {wait}.")
             return
-        if not all(profile["team"][f"slot{i}"] for i in range(1, 4)):
+        if not all(profile["team"].get(f"slot{i}") for i in range(1, 4)):
             await interaction.edit_original_response(
                 content="❌ Team incomplete\nSet slot 1 (TANK), slot 2 (ATTACK), slot 3 (SUPPORT)."
             )
             return
 
-        player_animals: Dict[str, Animal] = {
-            f"slot{i}": ANIMALS[profile["team"][f"slot{i}"]] for i in range(1, 4)
-        }
+        player_animals: Dict[str, Animal] = {}
+        for i in range(1, 4):
+            slot = f"slot{i}"
+            slot_value = profile["team"].get(slot)
+            if not isinstance(slot_value, dict) or not slot_value.get("animal_id"):
+                await interaction.edit_original_response(
+                    content="❌ Team incomplete\nSet slot 1 (TANK), slot 2 (ATTACK), slot 3 (SUPPORT)."
+                )
+                return
+            player_animals[slot] = ANIMALS[slot_value["animal_id"]]
         player_foods: Dict[str, Optional[Food]] = {}
         for i in range(1, 4):
             slot = f"slot{i}"
