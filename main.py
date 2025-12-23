@@ -49,9 +49,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE_PATH = os.path.join(BASE_DIR, "users.json")
 
 
-DEFAULT_PREFIX = "zz"
-
-
 RARITY_ORDER = [
     ("COMMON", "⚪"),
     ("UNCOMMON", "🟢"),
@@ -286,7 +283,6 @@ class DataStore:
         if "version" not in data or "users" not in data:
             raise RuntimeError("users.json is missing required keys. Aborting startup.")
         data.setdefault("global", {"hatch_counts": {}})
-        data.setdefault("guilds", {})
         return data
 
     def _default_profile(self, user_id: str) -> Dict:
@@ -320,24 +316,6 @@ class DataStore:
 
     def save_profile(self, profile: Dict) -> None:
         self.data.setdefault("users", {})[profile["user_id"]] = profile
-        self._write_data()
-
-    def get_guild_prefix(self, guild_id: Optional[int]) -> str:
-        if not guild_id:
-            return DEFAULT_PREFIX
-        guild_key = str(guild_id)
-        guild_info = self.data.setdefault("guilds", {}).get(guild_key, {})
-        prefix = guild_info.get("prefix", DEFAULT_PREFIX)
-        if not prefix:
-            prefix = DEFAULT_PREFIX
-        return prefix
-
-    def set_guild_prefix(self, guild_id: int, prefix: str) -> None:
-        guild_key = str(guild_id)
-        guilds = self.data.setdefault("guilds", {})
-        guild_info = guilds.get(guild_key, {})
-        guild_info["prefix"] = prefix
-        guilds[guild_key] = guild_info
         self._write_data()
 
     def _write_data(self) -> None:
@@ -506,11 +484,8 @@ async def on_ready():
         print("❌ Dev guild sync failed:", e)
 
 
-def build_help_embed(page: int, prefix: str, show_admin_hint: bool = False) -> Optional[discord.Embed]:
-    header_lines = [f"Current prefix: {prefix}"]
-    if show_admin_hint:
-        header_lines.append("Admins can change it using:\n" f"{prefix} prefix <new_prefix>")
-    header_text = "\n".join(header_lines)
+def build_help_embed(page: int) -> Optional[discord.Embed]:
+    header_text = "Use slash commands (/) to interact with the bot."
 
     if page == 1:
         embed = discord.Embed(
@@ -548,20 +523,20 @@ def build_help_embed(page: int, prefix: str, show_admin_hint: bool = False) -> O
         embed.add_field(
             name="[🧾 Commands]",
             value=(
-                f"{prefix} daily        → daily rewards  \n"
-                f"{prefix} balance      → show coins & energy  \n"
-                f"{prefix} zoo          → view animals (counts only)  \n"
-                f"{prefix} index        → global animal index (all drop rates & stats)  \n"
-                f"{prefix} stats <x>    → view animal stats & lore  \n"
-                f"{prefix} team view    → see your current team  \n"
-                f"{prefix} team add     → build your team  \n"
-                f"{prefix} team remove  → remove from team  \n"
-                f"{prefix} hunt <amt>   → hunt animals  \n"
-                f"{prefix} battle       → fight enemy teams (embed results)  \n"
-                f"{prefix} shop         → browse foods  \n"
-                f"{prefix} inv          → view owned foods  \n"
-                f"{prefix} use <food> <pos> → equip food (replaces old)  \n"
-                f"{prefix} sell <x> <n> → sell animals or food"
+                "/daily        → daily rewards  \n"
+                "/balance      → show coins & energy  \n"
+                "/zoo          → view animals (counts only)  \n"
+                "/index        → global animal index (all drop rates & stats)  \n"
+                "/stats <x>    → view animal stats & lore  \n"
+                "/team view    → see your current team  \n"
+                "/team add     → build your team  \n"
+                "/team remove  → remove from team  \n"
+                "/hunt <amt>   → hunt animals  \n"
+                "/battle       → fight enemy teams (embed results)  \n"
+                "/shop         → browse foods  \n"
+                "/inv          → view owned foods  \n"
+                "/use <food> <pos> → equip food (replaces old)  \n"
+                "/sell <x> <n> → sell animals or food"
             ),
             inline=False,
         )
@@ -574,7 +549,7 @@ def build_help_embed(page: int, prefix: str, show_admin_hint: bool = False) -> O
             ),
             inline=False,
         )
-        embed.set_footer(text=f"Use {prefix} help 2 for battle and food rules")
+        embed.set_footer(text="Use /help 2 for battle and food rules")
         return embed
 
     if page == 2:
@@ -641,29 +616,10 @@ def build_help_embed(page: int, prefix: str, show_admin_hint: bool = False) -> O
     return None
 
 
-def parse_help_page(content: str) -> int:
-    parts = content.strip().split()
-    if len(parts) >= 2 and parts[1].isdigit():
-        return int(parts[1])
-    return 1
-
-
-def strip_prefix(content: str, prefix: str) -> Optional[str]:
-    lowered = content.lower()
-    lowered_prefix = prefix.lower()
-    if not lowered.startswith(lowered_prefix):
-        return None
-    remainder = content[len(prefix) :]
-    return remainder.lstrip()
-
-
 @client.tree.command(name="help", description="📘 View the Emoji Zoo help pages")
 @app_commands.describe(page="Help page number (1 or 2)")
 async def help_command(interaction: discord.Interaction, page: int = 1):
-    prefix = store.get_guild_prefix(interaction.guild_id)
-    perms = getattr(interaction.user, "guild_permissions", None)
-    is_admin = bool(perms and (perms.administrator or perms.manage_guild))
-    embed = build_help_embed(page, prefix, is_admin)
+    embed = build_help_embed(page)
     if not embed:
         await interaction.response.send_message(
             "❌ Invalid page. Choose 1 or 2.", ephemeral=True
@@ -722,9 +678,6 @@ async def index(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-PREFIX_COMMAND_ALIASES = {"prefix", "setprefix", "set-prefix", "changeprefix"}
-
-
 def rarity_drop_rate_map() -> Dict[str, float]:
     return {rarity: chance for chance, rarity in DROP_TABLE}
 
@@ -737,57 +690,6 @@ async def on_message(message: discord.Message):
     lowered = content.lower()
     if not lowered:
         return
-
-    guild_id = message.guild.id if message.guild else None
-    prefix = store.get_guild_prefix(guild_id)
-    perms = getattr(message.author, "guild_permissions", None)
-    is_admin = bool(perms and (perms.administrator or perms.manage_guild))
-
-    if lowered.startswith("/"):
-        await message.channel.send(
-            "This bot uses prefix commands.\n" f"Try: {prefix} battle"
-        )
-        return
-
-    prefixless = strip_prefix(content, prefix)
-    if prefixless is not None:
-        lowered_prefixless = prefixless.lower()
-        if lowered_prefixless.startswith("help"):
-            page = parse_help_page(prefixless)
-            embed = build_help_embed(page, prefix, is_admin)
-            if not embed:
-                await message.channel.send("❌ Invalid page. Choose 1 or 2.")
-                return
-            await message.channel.send(embed=embed)
-            return
-
-        if any(lowered_prefixless.startswith(alias) for alias in PREFIX_COMMAND_ALIASES):
-            if not message.guild:
-                await message.channel.send("❌ Prefix can only be changed in a server.")
-                return
-            if not is_admin:
-                await message.channel.send("❌ You do not have permission to change the prefix.")
-                return
-
-            parts = prefixless.split()
-            if len(parts) < 2:
-                await message.channel.send("❌ Provide a prefix to set (1-5 characters).")
-                return
-            new_prefix = parts[1]
-            if not (1 <= len(new_prefix) <= 5):
-                await message.channel.send("❌ Prefix length must be between 1 and 5 characters.")
-                return
-            if any(ch.isspace() for ch in new_prefix) or any(
-                bad in new_prefix for bad in ["@", "#", "/"]
-            ):
-                await message.channel.send(
-                    "❌ Prefix cannot contain spaces or the characters @, #, /."
-                )
-                return
-
-            store.set_guild_prefix(message.guild.id, new_prefix)
-            await message.channel.send(f"✅ Server prefix updated to: {new_prefix}")
-            return
 
     if lowered.startswith("-data"):
         store._write_data()
