@@ -738,11 +738,32 @@ class IndexView(discord.ui.View):
         embed = build_index_embed()
         filter_titles = {"all": "All", "owned": "Owned", "not_owned": "Not Owned"}
         embed.title = f"📘 Animal Index — {emoji} {rarity.title()}"
-        embed.add_field(
-            name=f"Filter: {filter_titles[self.filter_mode]}",
-            value="\n\n".join(blocks) if blocks else "No animals match this filter.",
-            inline=False,
-        )
+        display_blocks = blocks or ["No animals match this filter."]
+        chunk: List[str] = []
+        chunk_length = 0
+        for block in display_blocks:
+            block_length = len(block)
+            separator_length = 2 if chunk else 0
+            if chunk and chunk_length + separator_length + block_length > 1024:
+                embed.add_field(
+                    name=f"Filter: {filter_titles[self.filter_mode]}" if not embed.fields else "Continued",
+                    value="\n\n".join(chunk),
+                    inline=False,
+                )
+                chunk = [block]
+                chunk_length = block_length
+            else:
+                if chunk:
+                    chunk_length += separator_length
+                chunk.append(block)
+                chunk_length += block_length
+
+        if chunk:
+            embed.add_field(
+                name=f"Filter: {filter_titles[self.filter_mode]}" if not embed.fields else "Continued",
+                value="\n\n".join(chunk),
+                inline=False,
+            )
         return embed
 
     async def _update_message(self, interaction: discord.Interaction) -> None:
