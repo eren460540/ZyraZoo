@@ -59,6 +59,8 @@ RARITY_ORDER = [
     ("HIDDEN", "⚫"),
 ]
 
+RARITY_INDEX = {name: idx for idx, (name, _symbol) in enumerate(RARITY_ORDER)}
+
 ROLE_EMOJI = {
     "TANK": "🛡️",
     "ATTACK": "⚔️",
@@ -492,6 +494,9 @@ class DataStore:
         if "last_enemy_signature" not in profile:
             profile["last_enemy_signature"] = None
             migrated = True
+        if "battles_won" not in profile:
+            profile["battles_won"] = 0
+            migrated = True
 
         zoo = profile.get("zoo", {})
         normalized_zoo: Dict[str, Dict[str, int]] = {}
@@ -550,6 +555,7 @@ class DataStore:
             "equipped_food_wins": {"slot1": 0, "slot2": 0, "slot3": 0},
             "cooldowns": {"hunt": 0.0, "battle": 0.0},
             "last_enemy_signature": None,
+            "battles_won": 0,
         }
 
     def load_profile(self, user_id: str) -> Dict:
@@ -707,8 +713,19 @@ def coins_reward(enemy_multiplier: float) -> int:
     return max(5, scaled)
 
 
-def enemy_signature(team: Dict[str, Animal]) -> str:
-    return "|".join(team[f"slot{i}"].animal_id for i in range(1, 4))
+def enemy_signature(team: Dict[str, Animal], mutations: Optional[Dict[str, str]] = None) -> str:
+    parts: List[str] = []
+    for i in range(1, 4):
+        slot = f"slot{i}"
+        mut = ""
+        if mutations:
+            try:
+                mut_key = normalize_mutation_key(mutations.get(slot, "none"))
+                mut = f":{mut_key}"
+            except ValueError:
+                mut = ""
+        parts.append(f"{team[slot].animal_id}{mut}")
+    return "|".join(parts)
 
 
 def team_def_alive(team_hp: Dict[str, int], team_animals: Dict[str, Animal]) -> int:
@@ -743,6 +760,166 @@ def food_power(food: Optional[Food]) -> float:
     if not food:
         return 0.0
     return food.hp_bonus * 1.0 + food.atk_bonus * 1.5 + food.def_bonus * 1.2
+
+
+def mutation_multiplier_value(mutation: str) -> float:
+    meta = MUTATION_META.get(normalize_mutation_key(mutation), MUTATION_META["none"])
+    return float(meta.get("ability_multiplier", 1.0))
+
+
+def effective_power(animal: Animal, food: Optional[Food], mutation_multiplier: float) -> float:
+    return (power(animal) + food_power(food)) * mutation_multiplier
+
+
+def calculate_team_power(
+    animals: Dict[str, Animal],
+    foods: Dict[str, Optional[Food]],
+    mutations: Dict[str, str],
+) -> float:
+    total = 0.0
+    for i in range(1, 4):
+        slot = f"slot{i}"
+        mutation_multiplier = mutation_multiplier_value(mutations.get(slot, "none"))
+        total += effective_power(animals[slot], foods.get(slot), mutation_multiplier)
+    return total
+
+
+def random_enemy_food(animal: Animal) -> Optional[Food]:
+    if random.random() >= 0.35:
+        return None
+    animal_idx = RARITY_INDEX.get(animal.rarity, 0)
+    candidates = [
+        food
+        for food in FOODS.values()
+        if abs(RARITY_INDEX.get(food.rarity, 0) - animal_idx) <= 1
+    ]
+    if not candidates:
+        candidates = list(FOODS.values())
+    return random.choice(candidates)
+
+
+def random_enemy_mutation() -> str:
+    roll = random.random()
+    if roll < 0.55:
+        return "none"
+    if roll < 0.75:
+        return "golden"
+    if roll < 0.9:
+        return "diamond"
+    if roll < 0.97:
+        return "emerald"
+    return "rainbow"
+
+
+MUTATION_STRENGTH_ORDER = sorted(MUTATIONS, key=lambda m: mutation_multiplier_value(m))
+
+
+def _downgrade_mutation(mutations: Dict[str, str]) -> bool:
+    sorted_slots = sorted(
+        ((slot, mutation_multiplier_value(mutation)) for slot, mutation in mutations.items()),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    for slot, current_multiplier in sorted_slots:
+        order_idx = MUTATION_STRENGTH_ORDER.index(normalize_mutation_key(mutations[slot]))
+        if order_idx > 0 and current_multiplier > 1.0:
+            mutations[slot] = MUTATION_STRENGTH_ORDER[order_idx - 1]
+            return True
+    return False
+
+
+def _upgrade_mutation(mutations: Dict[str, str]) -> bool:
+    sorted_slots = sorted(
+        ((slot, mutation_multiplier_value(mutation)) for slot, mutation in mutations.items()),
+        key=lambda item: item[1],
+    )
+    for slot, _mult in sorted_slots:
+        order_idx = MUTATION_STRENGTH_ORDER.index(normalize_mutation_key(mutations[slot]))
+        if order_idx < len(MUTATION_STRENGTH_ORDER) - 1:
+            mutations[slot] = MUTATION_STRENGTH_ORDER[order_idx + 1]
+            return True
+    return False
+
+
+def _remove_highest_food(foods: Dict[str, Optional[Food]]) -> bool:
+    slot_to_remove = None
+    highest = -1.0
+    for slot, food in foods.items():
+        fp = food_power(food)
+        if food and fp > highest:
+            highest = fp
+            slot_to_remove = slot
+    if slot_to_remove:
+        foods[slot_to_remove] = None
+        return True
+    return False
+
+
+def _add_missing_food(animals: Dict[str, Animal], foods: Dict[str, Optional[Food]]) -> bool:
+    empty_slots = [slot for slot, food in foods.items() if food is None]
+    if not empty_slots:
+        return False
+    slot = random.choice(empty_slots)
+    foods[slot] = random_enemy_food(animals[slot])
+    return foods[slot] is not None
+
+
+def adjust_enemy_team(
+    animals: Dict[str, Animal],
+    foods: Dict[str, Optional[Food]],
+    mutations: Dict[str, str],
+    allowed_indices: List[int],
+    target_min: float,
+    target_max: float,
+) -> float:
+    for _ in range(350):
+        current_power = calculate_team_power(animals, foods, mutations)
+        if target_min <= current_power <= target_max:
+            return current_power
+        if current_power > target_max:
+            if _remove_highest_food(foods):
+                continue
+            if _downgrade_mutation(mutations):
+                continue
+        else:
+            if _add_missing_food(animals, foods):
+                continue
+            if _upgrade_mutation(mutations):
+                continue
+        slot = random.choice(list(animals.keys()))
+        animals[slot] = random_animal_by_rarity_and_role(allowed_indices, animals[slot].role)
+        foods[slot] = None if current_power > target_max else random_enemy_food(animals[slot])
+        mutations[slot] = "none" if current_power > target_max else random_enemy_mutation()
+
+    # Final enforcement to guarantee constraints
+    strongest_food = max(FOODS.values(), key=food_power)
+    weakest_index = min(allowed_indices)
+    strongest_index = max(allowed_indices)
+
+    for _ in range(200):
+        current_power = calculate_team_power(animals, foods, mutations)
+        if target_min <= current_power <= target_max:
+            break
+        if current_power > target_max:
+            if _remove_highest_food(foods):
+                continue
+            if _downgrade_mutation(mutations):
+                continue
+            slot = random.choice(list(animals.keys()))
+            animals[slot] = random_animal_by_rarity_and_role([weakest_index], animals[slot].role)
+            foods[slot] = None
+            mutations[slot] = "none"
+        else:
+            if _add_missing_food(animals, foods):
+                continue
+            if _upgrade_mutation(mutations):
+                continue
+            slot = random.choice(list(animals.keys()))
+            animals[slot] = random_animal_by_rarity_and_role([strongest_index], animals[slot].role)
+            foods[slot] = strongest_food
+            mutations[slot] = MUTATION_STRENGTH_ORDER[-1]
+
+    return calculate_team_power(animals, foods, mutations)
 
 
 def apply_food(animal: Animal, food: Optional[Food]) -> Tuple[int, int, int]:
@@ -1737,6 +1914,7 @@ async def battle(interaction: discord.Interaction):
             return
 
         player_animals: Dict[str, Animal] = {}
+        player_mutations: Dict[str, str] = {}
         for i in range(1, 4):
             slot = f"slot{i}"
             slot_value = profile["team"].get(slot)
@@ -1746,6 +1924,10 @@ async def battle(interaction: discord.Interaction):
                 )
                 return
             player_animals[slot] = ANIMALS[slot_value["animal_id"]]
+            try:
+                player_mutations[slot] = normalize_mutation_key(slot_value.get("mutation", "none"))
+            except ValueError:
+                player_mutations[slot] = "none"
         player_foods: Dict[str, Optional[Food]] = {}
         for i in range(1, 4):
             slot = f"slot{i}"
@@ -1761,49 +1943,95 @@ async def battle(interaction: discord.Interaction):
                 allowed.add(idx)
         allowed_indices = sorted(allowed)
 
-        player_power = sum(power(a) + food_power(player_foods[slot]) for slot, a in player_animals.items())
-        enemy_multiplier = random.uniform(0.85, 1.3)
-        target_power = player_power * enemy_multiplier
+        player_final_power = 0.0
+        for slot, animal in player_animals.items():
+            mutation_multiplier = mutation_multiplier_value(player_mutations.get(slot, "none"))
+            player_final_power += effective_power(animal, player_foods.get(slot), mutation_multiplier)
 
-        best_team: Optional[Dict[str, Animal]] = None
-        best_delta = float("inf")
+        target_min = player_final_power * 0.8
+        target_max = player_final_power * 1.3
         last_signature = profile.get("last_enemy_signature")
 
-        for attempt in range(50):
-            enemy_team = {
+        best_candidate: Optional[Tuple[Dict[str, Animal], Dict[str, Optional[Food]], Dict[str, str], float, str]] = None
+        best_delta = float("inf")
+        best_in_range: Optional[Tuple[Dict[str, Animal], Dict[str, Optional[Food]], Dict[str, str], float, str]] = None
+        best_in_range_not_same: Optional[
+            Tuple[Dict[str, Animal], Dict[str, Optional[Food]], Dict[str, str], float, str]
+        ] = None
+
+        for _attempt in range(300):
+            enemy_animals = {
                 "slot1": random_animal_by_rarity_and_role(allowed_indices, "TANK"),
                 "slot2": random_animal_by_rarity_and_role(allowed_indices, "ATTACK"),
                 "slot3": random_animal_by_rarity_and_role(allowed_indices, "SUPPORT"),
             }
-            signature = enemy_signature(enemy_team)
-            if signature == last_signature:
-                continue
-            pwr = sum(power(a) for a in enemy_team.values())
-            delta = abs(pwr - target_power)
+            enemy_foods = {slot: random_enemy_food(animal) for slot, animal in enemy_animals.items()}
+            enemy_mutations = {slot: random_enemy_mutation() for slot in enemy_animals}
+            enemy_power = calculate_team_power(enemy_animals, enemy_foods, enemy_mutations)
+            signature = enemy_signature(enemy_animals, enemy_mutations)
+
+            candidate = (enemy_animals, enemy_foods, enemy_mutations, enemy_power, signature)
+            delta = 0.0
+            if enemy_power < target_min:
+                delta = target_min - enemy_power
+            elif enemy_power > target_max:
+                delta = enemy_power - target_max
+
+            if target_min <= enemy_power <= target_max:
+                if signature != last_signature:
+                    best_in_range_not_same = candidate
+                    break
+                if not best_in_range:
+                    best_in_range = candidate
             if delta < best_delta:
                 best_delta = delta
-                best_team = enemy_team
-            if abs(pwr - target_power) <= target_power * 0.07:
-                best_team = enemy_team
-                break
+                best_candidate = candidate
 
-        if not best_team:
-            best_team = {
-                "slot1": random_animal_by_rarity_and_role(allowed_indices, "TANK"),
-                "slot2": random_animal_by_rarity_and_role(allowed_indices, "ATTACK"),
-                "slot3": random_animal_by_rarity_and_role(allowed_indices, "SUPPORT"),
-            }
+        final_choice = best_in_range_not_same or best_in_range or best_candidate
+        if not final_choice:
+            await interaction.edit_original_response(
+                content="❌ Battle setup failed. Please try again."
+            )
+            return
+        chosen_animals, chosen_foods, chosen_mutations, _, _ = final_choice
+        enemy_final_power = adjust_enemy_team(
+            chosen_animals,
+            chosen_foods,
+            chosen_mutations,
+            allowed_indices,
+            target_min,
+            target_max,
+        )
+        profile["last_enemy_signature"] = enemy_signature(chosen_animals, chosen_mutations)
 
-        enemy_animals = best_team
-        profile["last_enemy_signature"] = enemy_signature(enemy_animals)
+        enemy_animals = chosen_animals
+        enemy_foods = chosen_foods
+        enemy_mutations = chosen_mutations
+
+        enemy_final_power = calculate_team_power(enemy_animals, enemy_foods, enemy_mutations)
+        if enemy_final_power < target_min or enemy_final_power > target_max:
+            enemy_final_power = adjust_enemy_team(
+                enemy_animals,
+                enemy_foods,
+                enemy_mutations,
+                allowed_indices,
+                target_min,
+                target_max,
+            )
+        enemy_final_power = calculate_team_power(enemy_animals, enemy_foods, enemy_mutations)
 
         player_hp = {}
-        enemy_hp = {slot: animal.hp for slot, animal in enemy_animals.items()}
+        enemy_hp = {}
         player_stats: Dict[str, Tuple[int, int, int]] = {}
+        enemy_stats: Dict[str, Tuple[int, int, int]] = {}
         for slot, animal in player_animals.items():
             hp, atk, defense = apply_food(animal, player_foods.get(slot))
             player_stats[slot] = (hp, atk, defense)
             player_hp[slot] = hp
+        for slot, animal in enemy_animals.items():
+            hp, atk, defense = apply_food(animal, enemy_foods.get(slot))
+            enemy_stats[slot] = (hp, atk, defense)
+            enemy_hp[slot] = hp
 
         def first_alive(hp_map: Dict[str, int]) -> Optional[str]:
             for i in range(1, 4):
@@ -1827,10 +2055,10 @@ async def battle(interaction: discord.Interaction):
         rounds = 0
         while first_alive(player_hp) and first_alive(enemy_hp) and rounds < 100:
             rounds += 1
-            attack_phase(player_hp, player_stats, enemy_hp, {slot: (a.hp, a.atk, a.defense) for slot, a in enemy_animals.items()})
+            attack_phase(player_hp, player_stats, enemy_hp, enemy_stats)
             if not first_alive(enemy_hp):
                 break
-            attack_phase(enemy_hp, {slot: (a.hp, a.atk, a.defense) for slot, a in enemy_animals.items()}, player_hp, player_stats)
+            attack_phase(enemy_hp, enemy_stats, player_hp, player_stats)
 
         player_alive = first_alive(player_hp) is not None
         enemy_alive = first_alive(enemy_hp) is not None
@@ -1842,6 +2070,8 @@ async def battle(interaction: discord.Interaction):
         else:
             player_win = player_alive and not enemy_alive
 
+        enemy_final_power = calculate_team_power(enemy_animals, enemy_foods, enemy_mutations)
+        enemy_multiplier = enemy_final_power / player_final_power if player_final_power > 0 else 1.0
         energy_gain = 1 if player_win else 0
         coin_gain = coins_reward(enemy_multiplier) if player_win else 0
 
@@ -1849,49 +2079,71 @@ async def battle(interaction: discord.Interaction):
         profile["coins"] += coin_gain
         profile["cooldowns"]["battle"] = now_ts + 10
         if player_win:
+            profile["battles_won"] = profile.get("battles_won", 0) + 1
             for slot, food_id in profile.get("equipped_foods", {}).items():
                 if food_id:
                     profile["equipped_food_wins"][slot] = profile["equipped_food_wins"].get(slot, 0) + 1
         store.save_profile(profile)
         embed_color = 0x2ECC71 if player_win else 0xE74C3C
-        embed = discord.Embed(
-            title="Victory" if player_win else "Defeat",
-            description="Battle complete. Review the summary below.",
-            color=embed_color,
-        )
-        embed.add_field(
-            name="Battle Overview",
-            value=(
-                f"Enemy strength adapted to your squad and food boosts.\n"
-                f"Difficulty hint: {'Weaker Enemy' if enemy_multiplier < 0.95 else 'Balanced Fight' if enemy_multiplier < 1.12 else 'Tough Enemy'}"
-            ),
-            inline=False,
+        banner = (
+            "<:1636happypepe:1010165936646520973> YOU WON! <:1636happypepe:1010165936646520973>"
+            if player_win
+            else "<:cry:1416688020618215484> YOU LOST! <:cry:1416688020618215484>"
         )
 
-        survivor_lines = []
+        def format_line(
+            role_emoji: str,
+            animal_obj: Animal,
+            mutation_key: str,
+            food_obj: Optional[Food],
+            current_hp: int,
+            max_hp: int,
+        ) -> str:
+            mutation_emoji = MUTATION_META.get(mutation_key, MUTATION_META["none"]).get("emoji", "")
+            pieces = [role_emoji, animal_obj.emoji, animal_obj.animal_id]
+            if mutation_emoji:
+                pieces.append(mutation_emoji)
+            if food_obj:
+                pieces.append(food_obj.emoji)
+            header = " ".join(pieces)
+            return f"{header}\nHP: {current_hp}/{max_hp}"
+
+        enemy_lines = []
         for i in range(1, 4):
             slot = f"slot{i}"
-            pa = player_animals[slot]
-            ea = enemy_animals[slot]
-            p_food = player_foods.get(slot)
-            p_hp_max = player_stats[slot][0]
-            survivor_lines.append(
-                f"{ROLE_EMOJI[pa.role]} {pa.emoji} {pa.animal_id} {p_food.emoji if p_food else ''}\n"
-                f"You: {player_hp[slot]}/{p_hp_max} | Enemy: {enemy_hp[slot]}/{ea.hp}"
+            enemy_lines.append(
+                format_line(
+                    ROLE_EMOJI[enemy_animals[slot].role],
+                    enemy_animals[slot],
+                    enemy_mutations.get(slot, "none"),
+                    enemy_foods.get(slot),
+                    enemy_hp[slot],
+                    enemy_stats[slot][0],
+                )
             )
-        embed.add_field(name="Survivors", value="\n\n".join(survivor_lines), inline=False)
 
+        player_lines = []
+        for i in range(1, 4):
+            slot = f"slot{i}"
+            player_lines.append(
+                format_line(
+                    ROLE_EMOJI[player_animals[slot].role],
+                    player_animals[slot],
+                    player_mutations.get(slot, "none"),
+                    player_foods.get(slot),
+                    player_hp[slot],
+                    player_stats[slot][0],
+                )
+            )
+
+        embed = discord.Embed(title=banner, color=embed_color)
+        embed.add_field(name="Enemy Team", value="\n\n".join(enemy_lines), inline=False)
+        embed.add_field(name="Your Team", value="\n\n".join(player_lines), inline=False)
         embed.add_field(
             name="Rewards",
             value=f"💰 Coins: +{coin_gain}\n🔋 Energy: +{energy_gain}",
             inline=False,
         )
-        embed.add_field(
-            name="Difficulty Hint",
-            value="Weaker Enemy" if enemy_multiplier < 0.95 else "Balanced Fight" if enemy_multiplier < 1.12 else "Tough Enemy",
-            inline=False,
-        )
-        embed.set_footer(text="Tip: Equip foods to push your power higher before battling again.")
 
         await interaction.edit_original_response(content=None, embed=embed)
     except Exception as exc:
