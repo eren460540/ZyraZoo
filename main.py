@@ -1124,9 +1124,8 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        self.tree.clear_commands(guild=DEV_GUILD)
         synced = await self.tree.sync()
-        print("🌍 Clean global sync complete")
+        print(f"🌍 Synced {len(synced)} global slash commands")
 
 
 client = MyClient()
