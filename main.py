@@ -1731,7 +1731,14 @@ async def daily(interaction: discord.Interaction):
 @client.tree.command(name="zoo", description="🗂️ View your zoo inventory counts")
 async def zoo(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
-    blocks: List[str] = []
+    rarity_headers = {
+        "COMMON": ":white_circle: Common",
+        "UNCOMMON": ":green_circle: Uncommon",
+        "RARE": ":blue_circle: Rare",
+        "EPIC": ":purple_circle: Epic",
+    }
+
+    sections: List[str] = []
 
     for rarity, symbol in RARITY_ORDER:
         animals = sorted([a for a in ANIMALS.values() if a.rarity == rarity], key=lambda a: a.animal_id)
@@ -1741,29 +1748,52 @@ async def zoo(interaction: discord.Interaction):
             total_owned = sum(max(0, int(qty)) for qty in bucket.values())
             if total_owned <= 0:
                 continue
-            entries.append(f"{animal.emoji} {superscript_number(total_owned)}")
-        if entries:
-            lines: List[str] = []
-            current_line = ""
-            for entry in entries:
-                candidate = entry if not current_line else f"{current_line}  {entry}"
-                if len(candidate) > 170:
-                    lines.append(current_line)
-                    current_line = entry
-                else:
-                    current_line = candidate
-            if current_line:
-                lines.append(current_line)
-            blocks.append(f"{symbol} {rarity.capitalize()}\n" + "\n".join(lines))
 
-    if not blocks:
+            for mutation in MUTATION_ORDER:
+                qty = int(bucket.get(mutation, 0))
+                if qty <= 0:
+                    continue
+
+                if mutation == "none":
+                    entry = f"{animal.emoji} {superscript_number(qty)}"
+                else:
+                    fire = MUTATION_META[mutation]["emoji"]
+                    entry = f"{fire}{animal.emoji} {superscript_number(qty)}{fire}"
+                entries.append(entry)
+
+        if not entries:
+            continue
+
+        lines: List[str] = []
+        current_line = ""
+        for entry in entries:
+            candidate = entry if not current_line else f"{current_line} {entry}"
+            if len(candidate) > 170:
+                lines.append(current_line)
+                current_line = entry
+            else:
+                current_line = candidate
+        if current_line:
+            lines.append(current_line)
+
+        header = rarity_headers.get(rarity, f"{symbol} {rarity.capitalize()}")
+        section_lines = [header, *lines]
+        if rarity == "COMMON":
+            section_lines.append("(1-25x)")
+        sections.append("\n".join(section_lines))
+
+    if not sections:
         await interaction.response.send_message("Your zoo is empty.")
         return
 
+    heading = f"🌿 🌱 🌳 **{interaction.user.display_name}'s zoo!** 🌳 🌿 🌱\n\n"
+    content = heading + "\n\n".join(sections)
+
     messages: List[str] = []
     current_block = ""
-    for block in blocks:
-        candidate = block if not current_block else f"{current_block}\n\n{block}"
+    for block in content.split("\n\n"):
+        separator = "\n\n" if current_block else ""
+        candidate = f"{current_block}{separator}{block}" if current_block else block
         if len(candidate) > 1900:
             messages.append(current_block)
             current_block = block
