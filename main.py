@@ -1732,25 +1732,29 @@ async def daily(interaction: discord.Interaction):
 async def zoo(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
     blocks: List[str] = []
-    zoo_buckets = profile.get("zoo", {})
 
     for rarity, symbol in RARITY_ORDER:
         animals = sorted([a for a in ANIMALS.values() if a.rarity == rarity], key=lambda a: a.animal_id)
         entries: List[str] = []
         for animal in animals:
-            bucket = zoo_buckets.get(animal.animal_id, default_mutation_counts())
-            if not isinstance(bucket, dict):
-                try:
-                    bucket = {"none": max(0, int(bucket))}
-                except (TypeError, ValueError):
-                    bucket = default_mutation_counts()
+            bucket = mutation_bucket(profile, animal.animal_id)
             total_owned = sum(max(0, int(qty)) for qty in bucket.values())
             if total_owned <= 0:
                 continue
-            animal_name_plural = pluralize(animal.animal_id).replace("_", " ")
-            entries.append(format_owned_summary(animal_name_plural, animal.emoji, bucket))
+            entries.append(f"{animal.emoji} {superscript_number(total_owned)}")
         if entries:
-            blocks.append(f"{symbol} {rarity.capitalize()}\n" + "\n".join(entries))
+            lines: List[str] = []
+            current_line = ""
+            for entry in entries:
+                candidate = entry if not current_line else f"{current_line}  {entry}"
+                if len(candidate) > 170:
+                    lines.append(current_line)
+                    current_line = entry
+                else:
+                    current_line = candidate
+            if current_line:
+                lines.append(current_line)
+            blocks.append(f"{symbol} {rarity.capitalize()}\n" + "\n".join(lines))
 
     if not blocks:
         await interaction.response.send_message("Your zoo is empty.")
