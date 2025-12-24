@@ -1241,7 +1241,7 @@ def build_help_embed(page: int) -> Optional[discord.Embed]:
     return None
 
 
-@client.tree.command(name="help", description="📘 View the Emoji Zoo help pages", guild=DEV_GUILD)
+@client.tree.command(name="help", description="📘 View the Emoji Zoo help pages")
 @app_commands.describe(page="Help page number (1 or 2)")
 async def help_command(interaction: discord.Interaction, page: int = 1):
     embed = build_help_embed(page)
@@ -1587,7 +1587,7 @@ class AdminCommands(app_commands.Group):
 
 
 @client.tree.command(
-    name="index", description="📘 Browse all animals and their drop rates", guild=DEV_GUILD
+    name="index", description="📘 Browse all animals and their drop rates"
 )
 async def index(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
@@ -1640,7 +1640,7 @@ async def on_message(message: discord.Message):
         )
 
 
-@client.tree.command(name="balance", description="💼 Check your coins and energy", guild=DEV_GUILD)
+@client.tree.command(name="balance", description="💼 Check your coins and energy")
 async def balance(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
     embed = discord.Embed(title="💼 Your Balance", color=0xF1C40F)
@@ -1649,7 +1649,7 @@ async def balance(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@client.tree.command(name="profile", description="🧾 View your player profile", guild=DEV_GUILD)
+@client.tree.command(name="profile", description="🧾 View your player profile")
 async def profile_command(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
     battles_won = max(0, int(profile.get("battles_won", 0)))
@@ -1699,7 +1699,7 @@ async def profile_command(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@client.tree.command(name="daily", description="🎁 Claim your daily coins reward", guild=DEV_GUILD)
+@client.tree.command(name="daily", description="🎁 Claim your daily coins reward")
 async def daily(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
     profile = store.load_profile(user_id)
@@ -1728,7 +1728,7 @@ async def daily(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@client.tree.command(name="zoo", description="🗂️ View your zoo inventory counts", guild=DEV_GUILD)
+@client.tree.command(name="zoo", description="🗂️ View your zoo inventory counts")
 async def zoo(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
     blocks: List[str] = []
@@ -1773,7 +1773,7 @@ async def zoo(interaction: discord.Interaction):
         await interaction.followup.send(chunk)
 
 
-@client.tree.command(name="shop", description="🛒 Browse the food store", guild=DEV_GUILD)
+@client.tree.command(name="shop", description="🛒 Browse the food store")
 async def shop(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🛒 Food Shop",
@@ -1798,7 +1798,7 @@ async def shop(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@client.tree.command(name="buy", description="🧺 Buy a food by emoji or alias", guild=DEV_GUILD)
+@client.tree.command(name="buy", description="🧺 Buy a food by emoji or alias")
 @app_commands.describe(food="Food emoji or alias")
 async def buy(interaction: discord.Interaction, food: str):
     food_obj = resolve_food(food)
@@ -1831,7 +1831,7 @@ async def buy(interaction: discord.Interaction, food: str):
     await interaction.response.send_message(embed=embed)
 
 
-@client.tree.command(name="inv", description="🎒 View your food inventory", guild=DEV_GUILD)
+@client.tree.command(name="inv", description="🎒 View your food inventory")
 async def inv(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
     embed = discord.Embed(title="🎒 Your Foods", color=0x95A5A6)
@@ -1850,7 +1850,7 @@ async def inv(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
-@client.tree.command(name="use", description="🍽️ Equip a food onto a team slot", guild=DEV_GUILD)
+@client.tree.command(name="use", description="🍽️ Equip a food onto a team slot")
 @app_commands.describe(food="Food emoji or alias", pos="Team slot (1-3)")
 async def use_food(interaction: discord.Interaction, food: str, pos: int):
     if pos not in (1, 2, 3):
@@ -1889,7 +1889,7 @@ async def use_food(interaction: discord.Interaction, food: str, pos: int):
 
 
 @client.tree.command(
-    name="stats", description="📊 Show stats for an animal (emoji or alias)", guild=DEV_GUILD
+    name="stats", description="📊 Show stats for an animal (emoji or alias)"
 )
 @app_commands.describe(animal="Emoji or alias of the animal")
 async def stats(interaction: discord.Interaction, animal: str):
@@ -2061,11 +2061,11 @@ class TeamCommands(app_commands.Group):
         )
 
 
-client.tree.add_command(AdminCommands(), guild=DEV_GUILD)
-client.tree.add_command(TeamCommands(), guild=DEV_GUILD)
+client.tree.add_command(AdminCommands())
+client.tree.add_command(TeamCommands())
 
 
-@client.tree.command(name="hunt", description="🌱 Spend coins and energy to roll animals", guild=DEV_GUILD)
+@client.tree.command(name="hunt", description="🌱 Spend coins and energy to roll animals")
 async def hunt(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
     profile.setdefault("battles_won", 0)
@@ -2184,7 +2184,7 @@ class SellConfirmView(discord.ui.View):
 
 
 @client.tree.command(
-    name="sell", description="💰 Sell animals for coins (reserves protected)", guild=DEV_GUILD
+    name="sell", description="💰 Sell animals for coins (reserves protected)"
 )
 @app_commands.describe(
     mode="Sell a single animal or all animals of a rarity",
@@ -2404,7 +2404,7 @@ async def sell(
 
 
 @client.tree.command(
-    name="fuse", description="⚒️ Fuse four animals into a higher mutation", guild=DEV_GUILD
+    name="fuse", description="⚒️ Fuse four animals into a higher mutation"
 )
 @app_commands.describe(
     animal="Emoji or alias of the animal to fuse",
@@ -2490,7 +2490,7 @@ async def fuse(interaction: discord.Interaction, animal: str, mutation: str):
     await interaction.response.send_message(embed=embed)
 
 
-@client.tree.command(name="battle", description="⚔️ Battle an enemy bot for rewards", guild=DEV_GUILD)
+@client.tree.command(name="battle", description="⚔️ Battle an enemy bot for rewards")
 async def battle(interaction: discord.Interaction):
     await interaction.response.defer()
     try:
