@@ -18,6 +18,11 @@ if not TOKEN:
 DEV_GUILD_ID = 1452648204519739483  # your server
 DEV_GUILD = discord.Object(id=DEV_GUILD_ID)
 
+COINS_EMOJI = "<:money:1453396289915064343>"
+ENERGY_EMOJI = "<a:Battery_100:1453398046825254974>"
+WIN_EMOJI = "<:pepeee:1453395663709536365>"
+LOSE_EMOJI = "<:pepecrya:1453395928219386048>"
+
 
 # ==============================
 # Data definitions
@@ -94,22 +99,22 @@ MUTATION_ALIASES = {
 MUTATION_META = {
     "none": {"emoji": "", "multiplier": 1.0, "ability_multiplier": 1.0},
     "golden": {
-        "emoji": "<a:9922yellowfire:1392567259687551037>",
+        "emoji": "<a:Yellow_Fire:1453393990241226987>",
         "multiplier": 1.25,
         "ability_multiplier": 1.25,
     },
     "diamond": {
-        "emoji": "<a:3751bluefire:1392567237453545524>",
+        "emoji": "<a:bluefire:1453394371339616349>",
         "multiplier": 1.5,
         "ability_multiplier": 1.5,
     },
     "emerald": {
-        "emoji": "<a:9922greenfire:1392567257821089994>",
+        "emoji": "<a:GreenFire:1453394168025186418>",
         "multiplier": 2.0,
         "ability_multiplier": 2.0,
     },
     "rainbow": {
-        "emoji": "<a:8308rainbowfire:1392567255170158780>",
+        "emoji": "<a:Rainbow_Fire:1453394494232989809>",
         "multiplier": 5.0,
         "ability_multiplier": 5.0,
     },
@@ -1119,8 +1124,9 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
+        await self.tree.clear_commands(guild=DEV_GUILD)
         synced = await self.tree.sync()
-        print(f"🌍 Synced {len(synced)} global slash commands")
+        print("🌍 Clean global sync complete")
 
 
 client = MyClient()
@@ -1171,10 +1177,10 @@ def build_help_embed(page: int) -> Optional[discord.Embed]:
             inline=False,
         )
         embed.add_field(
-            name="[💰 Currencies]",
+            name=f"[{COINS_EMOJI} Currencies]",
             value=(
-                "💰 Coins → pay 5 coins per /hunt roll  \n"
-                "🔋 Energy → required per hunt roll (earned from wins)"
+                f"{COINS_EMOJI} Coins → pay 5 coins per /hunt roll  \n"
+                f"{ENERGY_EMOJI} Energy → required per hunt roll (earned from wins)"
             ),
             inline=False,
         )
@@ -1222,7 +1228,7 @@ def build_help_embed(page: int) -> Optional[discord.Embed]:
             inline=False,
         )
         embed.add_field(
-            name="[💰 Selling]",
+            name=f"[{COINS_EMOJI} Selling]",
             value=(
                 "• /sell supports animals and food  \n"
                 "• Equipped food cannot be sold (replace it first)  \n"
@@ -1281,8 +1287,8 @@ def format_animal_block(animal: Animal, mutation_counts: Dict[str, int]) -> str:
         f"🌱 Hatched globally: {hatched}\n"
         f"🎯 Spawn Chance: {spawn_chance:.2f}%\n"
         f"🌍 Owned Globally: {owned_global}\n"
-        f"💰 Sold Globally: {sold_global}\n"
-        f"💵 Value: {RARITY_SELL_VALUE[animal.rarity]} coins\n"
+        f"{COINS_EMOJI} Sold Globally: {sold_global}\n"
+        f"{COINS_EMOJI} Value: {RARITY_SELL_VALUE[animal.rarity]} coins\n"
         f"{owned_summary}"
     )
 
@@ -1644,8 +1650,8 @@ async def on_message(message: discord.Message):
 async def balance(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
     embed = discord.Embed(title="💼 Your Balance", color=0xF1C40F)
-    embed.add_field(name="💰 Coins", value=str(profile["coins"]), inline=False)
-    embed.add_field(name="🔋 Energy", value=str(profile["energy"]), inline=False)
+    embed.add_field(name=f"{COINS_EMOJI} Coins", value=str(profile["coins"]), inline=False)
+    embed.add_field(name=f"{ENERGY_EMOJI} Energy", value=str(profile["energy"]), inline=False)
     await interaction.response.send_message(embed=embed)
 
 
@@ -1683,8 +1689,8 @@ async def profile_command(interaction: discord.Interaction):
         value=f"{next_threshold} wins ({remaining} to go)",
         inline=True,
     )
-    embed.add_field(name="💰 Coins", value=str(profile.get("coins", 0)), inline=True)
-    embed.add_field(name="🔋 Energy", value=str(profile.get("energy", 0)), inline=True)
+    embed.add_field(name=f"{COINS_EMOJI} Coins", value=str(profile.get("coins", 0)), inline=True)
+    embed.add_field(name=f"{ENERGY_EMOJI} Energy", value=str(profile.get("energy", 0)), inline=True)
     embed.add_field(
         name="🏹 Total Hunts", value=str(profile.get("total_hunts", 0)), inline=True
     )
@@ -1722,8 +1728,8 @@ async def daily(interaction: discord.Interaction):
     store.save_profile(profile)
     DAILY_COOLDOWNS[user_id] = now_ts + 24 * 3600
     embed = discord.Embed(title="🎁 Daily Reward", color=0x2ECC71)
-    embed.add_field(name="💰 Coins", value="+100", inline=False)
-    embed.add_field(name="🔋 Energy", value="+40", inline=False)
+    embed.add_field(name=f"{COINS_EMOJI} Coins", value="+100", inline=False)
+    embed.add_field(name=f"{ENERGY_EMOJI} Energy", value="+40", inline=False)
     embed.set_footer(text="Come back in 24 hours")
     await interaction.response.send_message(embed=embed)
 
@@ -1731,17 +1737,12 @@ async def daily(interaction: discord.Interaction):
 @client.tree.command(name="zoo", description="🗂️ View your zoo inventory counts")
 async def zoo(interaction: discord.Interaction):
     profile = store.load_profile(str(interaction.user.id))
-    rarity_headers = {
-        "COMMON": ":white_circle: Common",
-        "UNCOMMON": ":green_circle: Uncommon",
-        "RARE": ":blue_circle: Rare",
-        "EPIC": ":purple_circle: Epic",
-    }
-
     sections: List[str] = []
 
     for rarity, symbol in RARITY_ORDER:
-        animals = sorted([a for a in ANIMALS.values() if a.rarity == rarity], key=lambda a: a.animal_id)
+        animals = sorted(
+            [a for a in ANIMALS.values() if a.rarity == rarity], key=lambda a: a.animal_id
+        )
         entries: List[str] = []
         for animal in animals:
             bucket = mutation_bucket(profile, animal.animal_id)
@@ -1753,33 +1754,17 @@ async def zoo(interaction: discord.Interaction):
                 qty = int(bucket.get(mutation, 0))
                 if qty <= 0:
                     continue
-
-                if mutation == "none":
-                    entry = f"{animal.emoji} {superscript_number(qty)}"
-                else:
-                    fire = MUTATION_META[mutation]["emoji"]
-                    entry = f"{fire}{animal.emoji} {superscript_number(qty)}{fire}"
+                entry = f"{animal.emoji} {superscript_number(qty)}"
+                if mutation != "none":
+                    mutation_meta = MUTATION_META[mutation]
+                    multiplier_text = _format_multiplier(mutation_meta["multiplier"])
+                    entry = f"{entry} ({mutation_meta['emoji']} {multiplier_text}x)"
                 entries.append(entry)
 
         if not entries:
             continue
 
-        lines: List[str] = []
-        current_line = ""
-        for entry in entries:
-            candidate = entry if not current_line else f"{current_line} {entry}"
-            if len(candidate) > 170:
-                lines.append(current_line)
-                current_line = entry
-            else:
-                current_line = candidate
-        if current_line:
-            lines.append(current_line)
-
-        header = rarity_headers.get(rarity, f"{symbol} {rarity.capitalize()}")
-        section_lines = [header, *lines]
-        if rarity == "COMMON":
-            section_lines.append("(1-25x)")
+        section_lines = [f"{symbol} {rarity.title()}", " ".join(entries)]
         sections.append("\n".join(section_lines))
 
     if not sections:
@@ -1951,8 +1936,8 @@ async def stats(interaction: discord.Interaction, animal: str):
         f"🌱 Hatched globally: {hatched}\n"
         f"🎯 Spawn Chance: {spawn_chance:.2f}%\n"
         f"🌍 Owned Globally: {owned_global}\n"
-        f"💰 Sold Globally: {sold_global}\n"
-        f"💵 Value: {RARITY_SELL_VALUE[a.rarity]} coins\n\n"
+        f"{COINS_EMOJI} Sold Globally: {sold_global}\n"
+        f"{COINS_EMOJI} Value: {RARITY_SELL_VALUE[a.rarity]} coins\n\n"
         f"{owned_summary}"
     )
     await interaction.response.send_message(msg)
@@ -2128,7 +2113,7 @@ async def hunt(interaction: discord.Interaction):
     if profile["energy"] < rolls:
         needed = rolls - profile["energy"]
         await interaction.response.send_message(
-            f"❌ Not enough energy\nNeed {needed} more 🔋. Win battles to gain energy.",
+            f"❌ Not enough energy\nNeed {needed} more {ENERGY_EMOJI}. Win battles to gain energy.",
             ephemeral=True,
         )
         return
@@ -2186,8 +2171,8 @@ async def hunt(interaction: discord.Interaction):
 
     lines.append("")
     lines.append("────────────────")
-    lines.append(f"💰 Coins spent: {coins_spent}")
-    lines.append(f"🔋 Energy used: {rolls}")
+    lines.append(f"{COINS_EMOJI} Coins spent: {coins_spent}")
+    lines.append(f"{ENERGY_EMOJI} Energy used: {rolls}")
 
     await interaction.response.send_message("\n".join(lines))
 
@@ -2218,7 +2203,7 @@ class SellConfirmView(discord.ui.View):
 
 
 @client.tree.command(
-    name="sell", description="💰 Sell animals for coins (reserves protected)"
+    name="sell", description=f"{COINS_EMOJI} Sell animals for coins (reserves protected)"
 )
 @app_commands.describe(
     mode="Sell a single animal or all animals of a rarity",
@@ -2425,7 +2410,7 @@ async def sell(
             return
         total_sold, total_coins = finalize_sale(plan)
         await message.edit(
-            content=f"✅ SOLD\nItems: {total_sold}\n💰 Coins: +{total_coins}",
+            content=f"✅ SOLD\nItems: {total_sold}\n{COINS_EMOJI} Coins: +{total_coins}",
             embed=None,
             view=None,
         )
@@ -2433,7 +2418,7 @@ async def sell(
 
     total_sold, total_coins = finalize_sale(plan)
     await interaction.response.send_message(
-        f"✅ SOLD\n{plan[0][0].emoji} {plan[0][0].animal_id} ({format_mutation_label(plan[0][1])}) x{total_sold}\n💰 Coins: +{total_coins}"
+        f"✅ SOLD\n{plan[0][0].emoji} {plan[0][0].animal_id} ({format_mutation_label(plan[0][1])}) x{total_sold}\n{COINS_EMOJI} Coins: +{total_coins}"
     )
 
 
@@ -2783,9 +2768,9 @@ async def battle(interaction: discord.Interaction):
         store.save_profile(profile)
         embed_color = 0x2ECC71 if player_win else 0xE74C3C
         banner = (
-            "<:1636happypepe:1010165936646520973> YOU WON! <:1636happypepe:1010165936646520973>"
+            f"{WIN_EMOJI} YOU WON! {WIN_EMOJI}"
             if player_win
-            else "<:cry:1416688020618215484> YOU LOST! <:cry:1416688020618215484>"
+            else f"{LOSE_EMOJI} YOU LOST! {LOSE_EMOJI}"
         )
 
         def format_line(
@@ -2833,7 +2818,7 @@ async def battle(interaction: discord.Interaction):
                 )
             )
 
-        rewards_lines = [f"💰 Coins: +{coin_gain}", f"🔋 Energy: +{energy_gain}"]
+        rewards_lines = [f"{COINS_EMOJI} Coins: +{coin_gain}", f"{ENERGY_EMOJI} Energy: +{energy_gain}"]
         if player_win:
             rewards_lines.append(
                 "Rewards scale with team rarity, mutations, and foods."
