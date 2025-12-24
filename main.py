@@ -1398,7 +1398,8 @@ class AdminCommands(app_commands.Group):
     @app_commands.command(name="give", description="Admin: give resources or animals")
     @app_commands.describe(
         type="Resource type",
-        target="Animal emoji/alias or target user",
+        user="Target user to receive the resource",
+        target="Animal emoji/alias (animals only)",
         amount="Amount to give",
         mutation="Mutation tier when giving animals",
     )
@@ -1413,6 +1414,7 @@ class AdminCommands(app_commands.Group):
         self,
         interaction: discord.Interaction,
         type: app_commands.Choice[str],
+        user: discord.User,
         target: str,
         amount: int,
         mutation: str = "none",
@@ -1430,10 +1432,12 @@ class AdminCommands(app_commands.Group):
             return
 
         type_value = type.value if isinstance(type, app_commands.Choice) else str(type)
-        target_user_id = str(interaction.user.id)
-        target_display = interaction.user.mention
+        target_user_id = str(user.id)
+        target_display = f"{user.mention} ({user.id})"
         animal_field = None
+        mutation_field = None
         applied_amount = amount
+        profile = store.load_profile(target_user_id)
 
         if type_value == "animal":
             animal_obj = resolve_animal(target)
@@ -1451,8 +1455,6 @@ class AdminCommands(app_commands.Group):
                     ephemeral=True,
                 )
                 return
-
-            profile = store.load_profile(target_user_id)
             add_animal(profile, animal_obj.animal_id, mutation_key, amount)
             store.adjust_owned_count(animal_obj.animal_id, amount)
             store.save_profile(profile)
@@ -1460,20 +1462,12 @@ class AdminCommands(app_commands.Group):
                 f"{animal_obj.emoji} {animal_obj.animal_id} "
                 f"({format_mutation_label(mutation_key)})"
             )
-        elif type_value in ("energy", "coins"):
-            user_id = parse_user_id(target)
-            if not user_id:
-                await interaction.response.send_message(
-                    "❌ Invalid target user. Provide a mention or user ID.", ephemeral=True
-                )
-                return
-            profile = store.load_profile(user_id)
-            target_user_id = user_id
-            target_display = f"<@{user_id}>"
-            if type_value == "energy":
-                profile["energy"] += amount
-            else:
-                profile["coins"] += amount
+            mutation_field = format_mutation_label(mutation_key) or "None"
+        elif type_value == "energy":
+            profile["energy"] = profile.get("energy", 0) + amount
+            store.save_profile(profile)
+        elif type_value == "coins":
+            profile["coins"] = profile.get("coins", 0) + amount
             store.save_profile(profile)
 
         embed = discord.Embed(title="✅ Admin Give", color=0x2ECC71)
@@ -1483,12 +1477,15 @@ class AdminCommands(app_commands.Group):
         embed.add_field(name="Amount", value=str(applied_amount), inline=True)
         if animal_field:
             embed.add_field(name="Animal", value=animal_field, inline=False)
+        if mutation_field:
+            embed.add_field(name="Mutation", value=mutation_field, inline=False)
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="remove", description="Admin: remove resources or animals")
     @app_commands.describe(
         type="Resource type",
-        target="Animal emoji/alias or target user",
+        user="Target user to remove the resource from",
+        target="Animal emoji/alias (animals only)",
         amount="Amount to remove",
         mutation="Mutation tier when removing animals",
     )
@@ -1503,6 +1500,7 @@ class AdminCommands(app_commands.Group):
         self,
         interaction: discord.Interaction,
         type: app_commands.Choice[str],
+        user: discord.User,
         target: str,
         amount: int,
         mutation: str = "none",
@@ -1520,10 +1518,12 @@ class AdminCommands(app_commands.Group):
             return
 
         type_value = type.value if isinstance(type, app_commands.Choice) else str(type)
-        target_user_id = str(interaction.user.id)
-        target_display = interaction.user.mention
+        target_user_id = str(user.id)
+        target_display = f"{user.mention} ({user.id})"
         animal_field = None
+        mutation_field = None
         applied_amount = amount
+        profile = store.load_profile(target_user_id)
 
         if type_value == "animal":
             animal_obj = resolve_animal(target)
@@ -1541,12 +1541,10 @@ class AdminCommands(app_commands.Group):
                     ephemeral=True,
                 )
                 return
-
-            profile = store.load_profile(target_user_id)
             available = get_owned_count(profile, animal_obj.animal_id, mutation_key)
             if available < amount:
                 await interaction.response.send_message(
-                    "❌ Not enough quantity to remove the requested amount.",
+                    "❌ User does not have enough of that mutation.",
                     ephemeral=True,
                 )
                 return
@@ -1554,7 +1552,7 @@ class AdminCommands(app_commands.Group):
             removed = remove_animal(profile, animal_obj.animal_id, mutation_key, amount)
             if removed < amount:
                 await interaction.response.send_message(
-                    "❌ Not enough quantity to remove the requested amount.",
+                    "❌ User does not have enough of that mutation.",
                     ephemeral=True,
                 )
                 return
@@ -1565,24 +1563,16 @@ class AdminCommands(app_commands.Group):
                 f"{animal_obj.emoji} {animal_obj.animal_id} "
                 f"({format_mutation_label(mutation_key)})"
             )
-        elif type_value in ("energy", "coins"):
-            user_id = parse_user_id(target)
-            if not user_id:
-                await interaction.response.send_message(
-                    "❌ Invalid target user. Provide a mention or user ID.", ephemeral=True
-                )
-                return
-            profile = store.load_profile(user_id)
-            target_user_id = user_id
-            target_display = f"<@{user_id}>"
-            if type_value == "energy":
-                before = profile.get("energy", 0)
-                profile["energy"] = max(0, before - amount)
-                applied_amount = before - profile["energy"]
-            else:
-                before = profile.get("coins", 0)
-                profile["coins"] = max(0, before - amount)
-                applied_amount = before - profile["coins"]
+            mutation_field = format_mutation_label(mutation_key) or "None"
+        elif type_value == "energy":
+            before = profile.get("energy", 0)
+            profile["energy"] = max(0, before - amount)
+            applied_amount = before - profile["energy"]
+            store.save_profile(profile)
+        elif type_value == "coins":
+            before = profile.get("coins", 0)
+            profile["coins"] = max(0, before - amount)
+            applied_amount = before - profile["coins"]
             store.save_profile(profile)
 
         embed = discord.Embed(title="🗑️ Admin Remove", color=0xE74C3C)
@@ -1592,6 +1582,8 @@ class AdminCommands(app_commands.Group):
         embed.add_field(name="Amount", value=str(applied_amount), inline=True)
         if animal_field:
             embed.add_field(name="Animal", value=animal_field, inline=False)
+        if mutation_field:
+            embed.add_field(name="Mutation", value=mutation_field, inline=False)
         await interaction.response.send_message(embed=embed)
 
 
