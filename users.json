@@ -6,42 +6,100 @@
       "coins": 4,
       "energy": 4,
       "zoo": {
-        "deer": 2,
-        "dolphin": 1,
-        "goat": 2,
-        "dog": 1,
-        "fish": 2,
-        "mouse": 3,
-        "bug": 4,
-        "sheep": 3,
-        "chicken": 4,
-        "mammoth": 0,
-        "fox": 2,
-        "crocodile": 1,
-        "ram": 2,
-        "tropicalfish": 2,
-        "cow": 5,
-        "wolf": 1,
-        "bird": 1,
-        "owl": 1,
-        "ant": 1,
-        "horse": 1
+        "deer": {
+          "none": 2
+        },
+        "dolphin": {
+          "none": 1
+        },
+        "goat": {
+          "none": 2
+        },
+        "dog": {
+          "none": 1
+        },
+        "fish": {
+          "none": 2
+        },
+        "mouse": {
+          "none": 3
+        },
+        "bug": {
+          "none": 4
+        },
+        "sheep": {
+          "none": 3
+        },
+        "chicken": {
+          "none": 4
+        },
+        "mammoth": {
+          "none": 0
+        },
+        "fox": {
+          "none": 2
+        },
+        "crocodile": {
+          "none": 1
+        },
+        "ram": {
+          "none": 2
+        },
+        "tropicalfish": {
+          "none": 2
+        },
+        "cow": {
+          "none": 5
+        },
+        "wolf": {
+          "none": 1
+        },
+        "bird": {
+          "none": 1
+        },
+        "owl": {
+          "none": 1
+        },
+        "ant": {
+          "none": 1
+        },
+        "horse": {
+          "none": 1
+        }
       },
       "team": {
         "slot1": null,
-        "slot2": "dolphin",
-        "slot3": "bug"
+        "slot2": {
+          "animal_id": "dolphin",
+          "mutation": "none"
+        },
+        "slot3": {
+          "animal_id": "bug",
+          "mutation": "none"
+        }
       },
       "cooldowns": {
         "hunt": 1766420465.8915439,
         "battle": 1766420382.30323
       },
-      "last_enemy_signature": "elephant|dolphin|swan_epic"
+      "last_enemy_signature": "elephant|dolphin|swan_epic",
+      "foods": {},
+      "equipped_foods": {
+        "slot1": null,
+        "slot2": null,
+        "slot3": null
+      },
+      "equipped_food_wins": {
+        "slot1": 0,
+        "slot2": 0,
+        "slot3": 0
+      },
+      "battles_won": 0
     },
     "1423620048521793607": {
       "user_id": "1423620048521793607",
-      "coins": 29,
-      "energy": 25,
+      "coins": 30,
+      "energy": 23,
       "zoo": {
         "tropicalfish": {
           "none": 1,
@@ -51,71 +109,169 @@
           "rainbow": 0
         },
         "parrot": {
-          "none": 1,
+          "none": 2,
           "golden": 0,
           "diamond": 0,
           "emerald": 0,
           "rainbow": 0
         },
         "sheep": {
-          "none": 2,
+          "none": 3,
           "golden": 0,
           "diamond": 0,
           "emerald": 0,
           "rainbow": 0
         },
         "fish": {
-          "none": 2,
+          "none": 1,
           "golden": 0,
           "diamond": 0,
           "emerald": 0,
           "rainbow": 0
         },
         "chicken": {
-          "none": 1,
+          "none": 0,
           "golden": 0,
           "diamond": 0,
           "emerald": 0,
           "rainbow": 0
         },
         "dog": {
-          "none": 1,
+          "none": 3,
           "golden": 0,
           "diamond": 0,
           "emerald": 0,
-          "rainbow": 0
+          "rainbow": 1
         },
         "bug": {
-          "none": 1,
+          "none": 0,
           "golden": 0,
           "diamond": 0,
           "emerald": 0,
           "rainbow": 0
         },
         "bird": {
-          "none": 2,
+          "none": 1,
           "golden": 0,
           "diamond": 0,
           "emerald": 0,
           "rainbow": 0
         },
         "ant": {
-          "none": 1,
-          "golden": 1,
+          "none": 0,
+          "golden": 0,
           "diamond": 0,
           "emerald": 0,
           "rainbow": 0
         },
         "deer": {
+          "none": 2,
+          "golden": 1,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "turtle": {
+          "none": 3,
+          "golden": 2,
+          "diamond": 1,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "owl": {
           "none": 1,
           "golden": 0,
           "diamond": 0,
           "emerald": 0,
           "rainbow": 0
         },
-        "turtle": {
+        "cow": {
+          "none": 0,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "mouse": {
+          "none": 0,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "horse": {
+          "none": 1,
+          "golden": 0,
+          "diamond": 1,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "boar": {
+          "none": 4,
+          "golden": 0,
+          "diamond": 1,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "pig": {
           "none": 0,
           "golden": 1,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "ram": {
+          "none": 2,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "dolphin": {
+          "none": 1,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "flamingo": {
+          "none": 1,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "llama": {
+          "none": 1,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "goat": {
+          "none": 0,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "snake": {
+          "none": 2,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "fox": {
+          "none": 0,
+          "golden": 0,
+          "diamond": 0,
+          "emerald": 0,
+          "rainbow": 0
+        },
+        "raccoon": {
+          "none": 1,
+          "golden": 0,
           "diamond": 0,
           "emerald": 0,
           "rainbow": 0
@@ -135,65 +291,100 @@
           "mutation": "none"
         }
       },
-      "foods": {},
+      "foods": {
+        "apple": 0
+      },
       "equipped_foods": {
-        "slot1": null,
+        "slot1": "apple",
         "slot2": null,
         "slot3": null
       },
       "equipped_food_wins": {
-        "slot1": 0,
+        "slot1": 4,
         "slot2": 0,
         "slot3": 0
       },
       "cooldowns": {
-        "hunt": 1766524775.4403896,
-        "battle": 1766524770.841314
+        "hunt": 1766564478.0456324,
+        "battle": 1766564666.440707
       },
-      "last_enemy_signature": "turtle:none|fish:none|tropicalfish:golden",
-      "battles_won": 1,
-      "total_hunts": 10,
-      "level": 2
+      "last_enemy_signature": "ram:golden|chicken:none|bug:none",
+      "battles_won": 14,
+      "total_hunts": 28,
+      "level": 5
     }
   },
   "global": {
     "hatch_counts": {
       "tropicalfish": 2,
-      "parrot": 1,
-      "sheep": 2,
-      "fish": 2,
+      "parrot": 2,
+      "sheep": 4,
+      "fish": 4,
       "chicken": 1,
-      "dog": 1,
-      "bug": 1,
-      "bird": 2,
-      "ant": 2,
-      "deer": 1,
-      "turtle": 1
+      "dog": 4,
+      "bug": 3,
+      "bird": 4,
+      "ant": 6,
+      "deer": 3,
+      "turtle": 6,
+      "owl": 1,
+      "cow": 2,
+      "mouse": 4,
+      "horse": 2,
+      "boar": 5,
+      "pig": 4,
+      "ram": 5,
+      "dolphin": 1,
+      "flamingo": 1,
+      "llama": 1,
+      "goat": 2,
+      "snake": 2,
+      "fox": 1,
+      "raccoon": 1
     },
     "owned_counts": {
-      "deer": 3,
-      "dolphin": 1,
+      "deer": 5,
+      "dolphin": 2,
       "goat": 2,
-      "dog": 2,
-      "fish": 4,
+      "dog": 5,
+      "fish": 3,
       "mouse": 3,
-      "bug": 5,
-      "sheep": 5,
-      "chicken": 5,
+      "bug": 4,
+      "sheep": 6,
+      "chicken": 4,
       "mammoth": 0,
       "fox": 2,
       "crocodile": 1,
-      "ram": 2,
+      "ram": 4,
       "tropicalfish": 4,
       "cow": 5,
       "wolf": 1,
-      "bird": 3,
-      "owl": 1,
-      "ant": 3,
-      "horse": 1,
-      "parrot": 1,
-      "turtle": 1
+      "bird": 2,
+      "owl": 2,
+      "ant": 1,
+      "horse": 3,
+      "parrot": 2,
+      "turtle": 6,
+      "boar": 5,
+      "pig": 1,
+      "flamingo": 1,
+      "llama": 1,
+      "snake": 2,
+      "raccoon": 1
     },
-    "sold_counts": {}
+    "sold_counts": {
+      "mouse": 4,
+      "chicken": 1,
+      "fish": 3,
+      "pig": 3,
+      "cow": 2,
+      "ram": 3,
+      "sheep": 1,
+      "goat": 2,
+      "bug": 3,
+      "ant": 3,
+      "bird": 3,
+      "fox": 1
+    }
   }
 }
