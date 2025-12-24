@@ -746,6 +746,17 @@ def resolve_food(query: str) -> Optional[Food]:
     return None
 
 
+def parse_user_id(target: str) -> Optional[str]:
+    cleaned = target.strip()
+    if cleaned.startswith("<@") and cleaned.endswith(">"):
+        cleaned = cleaned[2:-1]
+        if cleaned.startswith("!"):
+            cleaned = cleaned[1:]
+    if cleaned.isdigit():
+        return cleaned
+    return None
+
+
 def chunk_text_blocks(blocks: List[str], limit: int = 1024, separator: str = "\n\n") -> List[str]:
     chunks: List[str] = []
     current: List[str] = []
@@ -1380,6 +1391,210 @@ class IndexView(discord.ui.View):
         await self._update_message(interaction)
 
 
+class AdminCommands(app_commands.Group):
+    def __init__(self):
+        super().__init__(name="admin", description="Admin commands")
+
+    @app_commands.command(name="give", description="Admin: give resources or animals")
+    @app_commands.describe(
+        type="Resource type",
+        target="Animal emoji/alias or target user",
+        amount="Amount to give",
+        mutation="Mutation tier when giving animals",
+    )
+    @app_commands.choices(
+        type=[
+            app_commands.Choice(name="Animal", value="animal"),
+            app_commands.Choice(name="Energy", value="energy"),
+            app_commands.Choice(name="Coins", value="coins"),
+        ]
+    )
+    async def give(
+        self,
+        interaction: discord.Interaction,
+        type: app_commands.Choice[str],
+        target: str,
+        amount: int,
+        mutation: str = "none",
+    ):
+        if str(interaction.user.id) != "1317419437854560288":
+            await interaction.response.send_message(
+                "❌ You do not have permission to use this command.", ephemeral=True
+            )
+            return
+
+        if amount <= 0:
+            await interaction.response.send_message(
+                "❌ Amount must be greater than 0.", ephemeral=True
+            )
+            return
+
+        type_value = type.value if isinstance(type, app_commands.Choice) else str(type)
+        target_user_id = str(interaction.user.id)
+        target_display = interaction.user.mention
+        animal_field = None
+        applied_amount = amount
+
+        if type_value == "animal":
+            animal_obj = resolve_animal(target)
+            if not animal_obj:
+                await interaction.response.send_message(
+                    "❌ Unknown animal. Try an emoji or alias.", ephemeral=True
+                )
+                return
+
+            try:
+                mutation_key = normalize_mutation_key(mutation)
+            except ValueError:
+                await interaction.response.send_message(
+                    "❌ Invalid mutation. Use none, golden, diamond, emerald, or rainbow.",
+                    ephemeral=True,
+                )
+                return
+
+            profile = store.load_profile(target_user_id)
+            add_animal(profile, animal_obj.animal_id, mutation_key, amount)
+            store.adjust_owned_count(animal_obj.animal_id, amount)
+            store.save_profile(profile)
+            animal_field = (
+                f"{animal_obj.emoji} {animal_obj.animal_id} "
+                f"({format_mutation_label(mutation_key)})"
+            )
+        elif type_value in ("energy", "coins"):
+            user_id = parse_user_id(target)
+            if not user_id:
+                await interaction.response.send_message(
+                    "❌ Invalid target user. Provide a mention or user ID.", ephemeral=True
+                )
+                return
+            profile = store.load_profile(user_id)
+            target_user_id = user_id
+            target_display = f"<@{user_id}>"
+            if type_value == "energy":
+                profile["energy"] += amount
+            else:
+                profile["coins"] += amount
+            store.save_profile(profile)
+
+        embed = discord.Embed(title="✅ Admin Give", color=0x2ECC71)
+        embed.add_field(name="Action", value="Gave", inline=True)
+        embed.add_field(name="Target", value=target_display, inline=True)
+        embed.add_field(name="Type", value=type_value.capitalize(), inline=True)
+        embed.add_field(name="Amount", value=str(applied_amount), inline=True)
+        if animal_field:
+            embed.add_field(name="Animal", value=animal_field, inline=False)
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="remove", description="Admin: remove resources or animals")
+    @app_commands.describe(
+        type="Resource type",
+        target="Animal emoji/alias or target user",
+        amount="Amount to remove",
+        mutation="Mutation tier when removing animals",
+    )
+    @app_commands.choices(
+        type=[
+            app_commands.Choice(name="Animal", value="animal"),
+            app_commands.Choice(name="Energy", value="energy"),
+            app_commands.Choice(name="Coins", value="coins"),
+        ]
+    )
+    async def remove(
+        self,
+        interaction: discord.Interaction,
+        type: app_commands.Choice[str],
+        target: str,
+        amount: int,
+        mutation: str = "none",
+    ):
+        if str(interaction.user.id) != "1317419437854560288":
+            await interaction.response.send_message(
+                "❌ You do not have permission to use this command.", ephemeral=True
+            )
+            return
+
+        if amount <= 0:
+            await interaction.response.send_message(
+                "❌ Amount must be greater than 0.", ephemeral=True
+            )
+            return
+
+        type_value = type.value if isinstance(type, app_commands.Choice) else str(type)
+        target_user_id = str(interaction.user.id)
+        target_display = interaction.user.mention
+        animal_field = None
+        applied_amount = amount
+
+        if type_value == "animal":
+            animal_obj = resolve_animal(target)
+            if not animal_obj:
+                await interaction.response.send_message(
+                    "❌ Unknown animal. Try an emoji or alias.", ephemeral=True
+                )
+                return
+
+            try:
+                mutation_key = normalize_mutation_key(mutation)
+            except ValueError:
+                await interaction.response.send_message(
+                    "❌ Invalid mutation. Use none, golden, diamond, emerald, or rainbow.",
+                    ephemeral=True,
+                )
+                return
+
+            profile = store.load_profile(target_user_id)
+            available = get_owned_count(profile, animal_obj.animal_id, mutation_key)
+            if available < amount:
+                await interaction.response.send_message(
+                    "❌ Not enough quantity to remove the requested amount.",
+                    ephemeral=True,
+                )
+                return
+
+            removed = remove_animal(profile, animal_obj.animal_id, mutation_key, amount)
+            if removed < amount:
+                await interaction.response.send_message(
+                    "❌ Not enough quantity to remove the requested amount.",
+                    ephemeral=True,
+                )
+                return
+            store.adjust_owned_count(animal_obj.animal_id, -removed)
+            store.save_profile(profile)
+            applied_amount = removed
+            animal_field = (
+                f"{animal_obj.emoji} {animal_obj.animal_id} "
+                f"({format_mutation_label(mutation_key)})"
+            )
+        elif type_value in ("energy", "coins"):
+            user_id = parse_user_id(target)
+            if not user_id:
+                await interaction.response.send_message(
+                    "❌ Invalid target user. Provide a mention or user ID.", ephemeral=True
+                )
+                return
+            profile = store.load_profile(user_id)
+            target_user_id = user_id
+            target_display = f"<@{user_id}>"
+            if type_value == "energy":
+                before = profile.get("energy", 0)
+                profile["energy"] = max(0, before - amount)
+                applied_amount = before - profile["energy"]
+            else:
+                before = profile.get("coins", 0)
+                profile["coins"] = max(0, before - amount)
+                applied_amount = before - profile["coins"]
+            store.save_profile(profile)
+
+        embed = discord.Embed(title="🗑️ Admin Remove", color=0xE74C3C)
+        embed.add_field(name="Action", value="Removed", inline=True)
+        embed.add_field(name="Target", value=target_display, inline=True)
+        embed.add_field(name="Type", value=type_value.capitalize(), inline=True)
+        embed.add_field(name="Amount", value=str(applied_amount), inline=True)
+        if animal_field:
+            embed.add_field(name="Animal", value=animal_field, inline=False)
+        await interaction.response.send_message(embed=embed)
+
+
 @client.tree.command(
     name="index", description="📘 Browse all animals and their drop rates", guild=DEV_GUILD
 )
@@ -1855,6 +2070,7 @@ class TeamCommands(app_commands.Group):
         )
 
 
+client.tree.add_command(AdminCommands(), guild=DEV_GUILD)
 client.tree.add_command(TeamCommands(), guild=DEV_GUILD)
 
 
@@ -2599,8 +2815,8 @@ async def battle(interaction: discord.Interaction):
             )
 
         embed = discord.Embed(title=banner, color=embed_color)
-        embed.add_field(name="Enemy Team", value="\n\n".join(enemy_lines), inline=True)
         embed.add_field(name="Your Team", value="\n\n".join(player_lines), inline=True)
+        embed.add_field(name="Enemy Team", value="\n\n".join(enemy_lines), inline=True)
         embed.add_field(name="Rewards", value="\n".join(rewards_lines), inline=False)
 
         await interaction.edit_original_response(content=None, embed=embed)
