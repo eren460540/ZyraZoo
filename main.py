@@ -485,6 +485,16 @@ RARITY_SELL_VALUE = {
     "HIDDEN": 250,
 }
 
+RARITY_COIN_WEIGHT = {
+    "COMMON": 0.6,
+    "UNCOMMON": 0.8,
+    "RARE": 1.0,
+    "EPIC": 1.25,
+    "LEGENDARY": 1.6,
+    "SPECIAL": 1.9,
+    "HIDDEN": 2.4,
+}
+
 
 # ==============================
 # Persistence
@@ -1737,10 +1747,27 @@ class TeamCommands(app_commands.Group):
                 total_atk += animal.atk
                 total_def += animal.defense
                 animal_name = animal.animal_id.replace("_", " ").title()
+                try:
+                    mutation_key = normalize_mutation_key(slot_value.get("mutation", "none"))
+                except ValueError:
+                    mutation_key = "none"
+                mutation_label = format_mutation_label(mutation_key) or "None"
+                mutation_emoji = MUTATION_META.get(mutation_key, MUTATION_META["none"]).get(
+                    "emoji", ""
+                )
+                food_id = profile.get("equipped_foods", {}).get(slot_key)
+                food_obj = FOODS.get(food_id) if food_id else None
+                food_display = (
+                    f"{food_obj.emoji} {food_obj.food_id.replace('_', ' ').title()}"
+                    if food_obj
+                    else "None"
+                )
                 embed.add_field(
                     name=f"Slot {idx} — {label}",
                     value=(
-                        f"{animal.emoji} {animal_name}\n"
+                        f"{animal.emoji} {animal_name} {mutation_emoji}\n"
+                        f"🧬 Mutation: {mutation_label}\n"
+                        f"🍽️ Food: {food_display}\n"
                         f"❤️ HP: {animal.hp}\n"
                         f"⚔️ ATK: {animal.atk}\n"
                         f"🛡️ DEF: {animal.defense}"
@@ -1956,6 +1983,7 @@ class SellConfirmView(discord.ui.View):
     mode="Sell a single animal or all animals of a rarity",
     target="Emoji/alias when selling an animal, or rarity name",
     amount="Number to sell or 'all'",
+    mutation="Mutation tier when selling an animal (any/none/golden/diamond/emerald/rainbow)",
 )
 @app_commands.choices(
     mode=[
@@ -1965,7 +1993,11 @@ class SellConfirmView(discord.ui.View):
     ]
 )
 async def sell(
-    interaction: discord.Interaction, mode: app_commands.Choice[str], target: str, amount: str
+    interaction: discord.Interaction,
+    mode: app_commands.Choice[str],
+    target: str,
+    amount: str,
+    mutation: str = "any",
 ):
     mode_value = mode.value if isinstance(mode, app_commands.Choice) else str(mode)
     amount_lower = amount.lower().strip()
@@ -1982,19 +2014,25 @@ async def sell(
     profile = store.load_profile(str(interaction.user.id))
 
     def finalize_sale(changes: List[Tuple[Animal, str, int]]) -> Tuple[int, int]:
-        total_coins = 0
+        total_coins = 0.0
         total_sold = 0
         for animal_obj, mutation, qty in changes:
             removed = remove_animal(profile, animal_obj.animal_id, mutation, qty)
             if removed <= 0:
                 continue
-            total_coins += removed * RARITY_SELL_VALUE[animal_obj.rarity]
+            line_value = (
+                removed
+                * RARITY_SELL_VALUE[animal_obj.rarity]
+                * mutation_multiplier_value(mutation)
+            )
+            total_coins += line_value
             total_sold += removed
             store.adjust_owned_count(animal_obj.animal_id, -removed)
             store.record_sale(animal_obj.animal_id, removed)
-        profile["coins"] += total_coins
+        coins_int = int(round(total_coins))
+        profile["coins"] += coins_int
         store.save_profile(profile)
-        return total_sold, total_coins
+        return total_sold, coins_int
 
     def allocate_sale(animal_obj: Animal, qty: int) -> List[Tuple[str, int]]:
         remaining = qty
@@ -2012,12 +2050,6 @@ async def sell(
         if remaining > 0:
             raise RuntimeError("Sale allocation failed due to insufficient inventory")
         return allocations
-
-    def summarize_plan(changes: List[Tuple[Animal, str, int]]) -> List[Tuple[Animal, int]]:
-        summary: Dict[str, int] = {}
-        for animal_obj, _mutation, qty in changes:
-            summary[animal_obj.animal_id] = summary.get(animal_obj.animal_id, 0) + qty
-        return [(ANIMALS[animal_id], qty) for animal_id, qty in summary.items()]
 
     if mode_value == "food":
         food_obj = resolve_food(target)
@@ -2059,30 +2091,51 @@ async def sell(
                 "❌ Unknown animal\nTry an emoji or alias.", ephemeral=True
             )
             return
-        reserved = reserved_species_count(profile["team"], a.animal_id)
-        if reserved > 0:
-            await interaction.response.send_message(
-                "❌ Cannot sell\nThat animal is currently in your team.\nRemove it from the team first.",
-                ephemeral=True,
-            )
-            return
-        owned = total_owned_species(profile, a.animal_id)
-        if owned <= 0:
+        owned_species = total_owned_species(profile, a.animal_id)
+        if owned_species <= 0:
             await interaction.response.send_message(
                 "❌ Cannot sell\nYou don't own that animal.", ephemeral=True
             )
             return
-        sell_amount = owned if sell_all else sell_count or 0
-        available_amount = sellable_species_amount(profile, a.animal_id)
-        if sell_amount > available_amount:
-            await interaction.response.send_message(
-                f"❌ Cannot sell\nYou can sell up to {available_amount} of that animal (team animals are excluded).",
-                ephemeral=True,
-            )
-            return
 
-        allocations = allocate_sale(a, sell_amount)
-        plan = [(a, mutation, qty) for mutation, qty in allocations]
+        mutation_choice = (mutation or "any").strip().lower()
+        if mutation_choice != "any":
+            try:
+                mutation_key = normalize_mutation_key(mutation_choice)
+            except ValueError:
+                await interaction.response.send_message(
+                    "❌ Invalid mutation\nUse any, none, golden, diamond, emerald, or rainbow.",
+                    ephemeral=True,
+                )
+                return
+            owned_specific = get_owned_count(profile, a.animal_id, mutation_key)
+            if owned_specific <= 0:
+                await interaction.response.send_message(
+                    "❌ Cannot sell\nYou don't own that mutation tier (team animals are excluded).",
+                    ephemeral=True,
+                )
+                return
+            sell_amount = owned_specific if sell_all else sell_count or 0
+            available_amount = sellable_amount(profile, a.animal_id, mutation_key)
+            if sell_amount > available_amount:
+                await interaction.response.send_message(
+                    f"❌ Cannot sell\nYou can sell up to {available_amount} of that mutation (team animals are excluded).",
+                    ephemeral=True,
+                )
+                return
+            plan = [(a, mutation_key, sell_amount)]
+        else:
+            sell_amount = owned_species if sell_all else sell_count or 0
+            available_amount = sellable_species_amount(profile, a.animal_id)
+            if sell_amount > available_amount:
+                await interaction.response.send_message(
+                    f"❌ Cannot sell\nYou can sell up to {available_amount} of that animal (team animals are excluded).",
+                    ephemeral=True,
+                )
+                return
+
+            allocations = allocate_sale(a, sell_amount)
+            plan = [(a, mutation, qty) for mutation, qty in allocations]
         needs_confirm = a.rarity in {"EPIC", "LEGENDARY", "SPECIAL", "HIDDEN"}
 
     else:
@@ -2114,10 +2167,12 @@ async def sell(
 
     if needs_confirm:
         embed = discord.Embed(title="⚠️ Confirm Sale", description="You are about to sell the following:")
-        summary = summarize_plan(plan)
         embed.add_field(
             name="Items",
-            value="\n".join(f"{animal.emoji} x{qty}" for animal, qty in summary),
+            value="\n".join(
+                f"{animal.emoji} {animal.animal_id} ({format_mutation_label(mutation)}) x{qty}"
+                for animal, mutation, qty in plan
+            ),
             inline=False,
         )
         view = SellConfirmView(interaction.user.id)
@@ -2137,7 +2192,7 @@ async def sell(
 
     total_sold, total_coins = finalize_sale(plan)
     await interaction.response.send_message(
-        f"✅ SOLD\n{plan[0][0].emoji} x{total_sold}\n💰 Coins: +{total_coins}"
+        f"✅ SOLD\n{plan[0][0].emoji} {plan[0][0].animal_id} ({format_mutation_label(plan[0][1])}) x{total_sold}\n💰 Coins: +{total_coins}"
     )
 
 
@@ -2279,8 +2334,49 @@ async def battle(interaction: discord.Interaction):
             mutation_multiplier = mutation_multiplier_value(player_mutations.get(slot, "none"))
             player_final_power += effective_power(animal, player_foods.get(slot), mutation_multiplier)
 
-        target_min = player_final_power * 0.8
-        target_max = player_final_power * 1.3
+        def mutation_stage(mutation_key: str) -> int:
+            try:
+                normalized = normalize_mutation_key(mutation_key)
+            except ValueError:
+                normalized = "none"
+            return {"none": 0, "golden": 0, "diamond": 1, "emerald": 2, "rainbow": 3}.get(
+                normalized, 0
+            )
+
+        food_count = sum(1 for food in player_foods.values() if food)
+        mutated_count = 0
+        highest_stage = 0
+        for mut in player_mutations.values():
+            try:
+                normalized = normalize_mutation_key(mut)
+            except ValueError:
+                normalized = "none"
+            if normalized != "none":
+                mutated_count += 1
+            highest_stage = max(highest_stage, mutation_stage(normalized))
+
+        def base_range() -> Tuple[float, float]:
+            if mutated_count == 0:
+                if food_count == 0:
+                    return 80.0, 150.0
+                if food_count == 1:
+                    return 80.0, 145.0
+                return 80.0, 140.0
+            if mutated_count == 3:
+                if food_count == 0:
+                    return 75.0, 130.0
+                return 70.0, 130.0
+            if food_count == 0:
+                return 75.0, 135.0
+            return 70.0, 135.0
+
+        base_min_pct, base_max_pct = base_range()
+        buff_per_stage = 5.0 * highest_stage
+        min_pct = max(0.0, base_min_pct - (buff_per_stage / 2))
+        max_pct = max(0.0, base_max_pct + (buff_per_stage / 2))
+
+        target_min = player_final_power * (min_pct / 100.0)
+        target_max = player_final_power * (max_pct / 100.0)
         last_signature = profile.get("last_enemy_signature")
 
         best_candidate: Optional[Tuple[Dict[str, Animal], Dict[str, Optional[Food]], Dict[str, str], float, str]] = None
@@ -2404,7 +2500,36 @@ async def battle(interaction: discord.Interaction):
         enemy_final_power = calculate_team_power(enemy_animals, enemy_foods, enemy_mutations)
         enemy_multiplier = enemy_final_power / player_final_power if player_final_power > 0 else 1.0
         energy_gain = 1 if player_win else 0
-        coin_gain = coins_reward(enemy_multiplier) if player_win else 0
+        base_coins = coins_reward(enemy_multiplier)
+        coin_gain = 0
+        if player_win:
+            rarity_weights: List[float] = []
+            mutation_food_factors: List[float] = []
+            for i in range(1, 4):
+                slot = f"slot{i}"
+                animal = player_animals.get(slot)
+                if not animal:
+                    continue
+                rarity_weights.append(RARITY_COIN_WEIGHT.get(animal.rarity, 1.0))
+                mutation_mult = mutation_multiplier_value(player_mutations.get(slot, "none"))
+                food_bonus_factor = 1.05 if player_foods.get(slot) else 1.0
+                slot_factor = 1.0 + ((mutation_mult - 1.0) * 0.35) + (
+                    (food_bonus_factor - 1.0) * 0.5
+                )
+                mutation_food_factors.append(slot_factor)
+
+            team_rarity_multiplier = (
+                sum(rarity_weights) / len(rarity_weights) if rarity_weights else 1.0
+            )
+            team_mutation_food_factor = (
+                sum(mutation_food_factors) / len(mutation_food_factors)
+                if mutation_food_factors
+                else 1.0
+            )
+            team_mutation_food_factor = min(team_mutation_food_factor, 1.6)
+            coin_gain = max(
+                5, round(base_coins * team_rarity_multiplier * team_mutation_food_factor)
+            )
 
         profile["energy"] += energy_gain
         profile["coins"] += coin_gain
@@ -2467,14 +2592,16 @@ async def battle(interaction: discord.Interaction):
                 )
             )
 
+        rewards_lines = [f"💰 Coins: +{coin_gain}", f"🔋 Energy: +{energy_gain}"]
+        if player_win:
+            rewards_lines.append(
+                "Rewards scale with team rarity, mutations, and foods."
+            )
+
         embed = discord.Embed(title=banner, color=embed_color)
-        embed.add_field(name="Enemy Team", value="\n\n".join(enemy_lines), inline=False)
-        embed.add_field(name="Your Team", value="\n\n".join(player_lines), inline=False)
-        embed.add_field(
-            name="Rewards",
-            value=f"💰 Coins: +{coin_gain}\n🔋 Energy: +{energy_gain}",
-            inline=False,
-        )
+        embed.add_field(name="Enemy Team", value="\n\n".join(enemy_lines), inline=True)
+        embed.add_field(name="Your Team", value="\n\n".join(player_lines), inline=True)
+        embed.add_field(name="Rewards", value="\n".join(rewards_lines), inline=False)
 
         await interaction.edit_original_response(content=None, embed=embed)
     except Exception as exc:
